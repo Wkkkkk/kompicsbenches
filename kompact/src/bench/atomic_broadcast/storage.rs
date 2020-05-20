@@ -558,14 +558,15 @@ pub mod paxos {
     use std::fmt::Debug;
     use super::super::messages::paxos::{ballot_leader_election::Ballot};
     use super::super::paxos::{SequenceTraits, PaxosStateTraits, raw_paxos::Entry};
-    use std::sync::Arc;
+    use std::sync::{Arc, atomic::AtomicU64};
     use std::mem;
     use crate::bench::atomic_broadcast::messages::paxos::PaxosSer;
+    use std::sync::atomic::Ordering;
 
     pub trait Sequence {
         fn new() -> Self;
 
-        fn new_with_sequence(seq: Vec<Entry>) -> Self;
+        fn new_shared_memory_sequence(seq: *mut Vec<Entry>) -> Self;    // TODO use generics instead
 
         fn append_entry(&mut self, entry: Entry);
 
@@ -581,15 +582,13 @@ pub mod paxos {
 
         fn get_ser_suffix(&self, from: u64) -> Option<Vec<u8>>;
 
-        fn get_sequence(&self) -> Vec<Entry>;
-
         fn get_sequence_len(&self) -> u64;
 
         fn stopped(&self) -> bool;
     }
 
     pub trait PaxosState {
-        fn new() -> Self;
+        fn new(ld: Option<Arc<AtomicU64>>) -> Self;
 
         fn set_promise(&mut self, nprom: Ballot);
 
@@ -745,14 +744,6 @@ pub mod paxos {
             }
         }
 
-        pub fn get_sequence(&self) -> Vec<Entry> {
-            match &self.sequence {
-                PaxosSequence::Active(s) => s.get_sequence(),
-                PaxosSequence::Stopped(s) => s.get_sequence(),
-                _ => panic!("Got unexpected intermediate PaxosSequence::None in get_sequence"),
-            }
-        }
-
         pub fn get_ser_entries(&self, from_idx: u64, to_idx: u64) -> Option<Vec<u8>> {
             match &self.sequence {
                 PaxosSequence::Active(s) => s.get_ser_entries(from_idx, to_idx),
@@ -814,58 +805,68 @@ pub mod paxos {
         }
     }
 
-    const INITIAL_CAP: usize = 5000;
+    unsafe impl Send for MemorySequence{}
+    unsafe impl Sync for MemorySequence{}
 
     #[derive(Debug)]
     pub struct MemorySequence {
-        sequence: Vec<Entry>
+        sequence: *mut Vec<Entry>
     }
 
     impl SequenceTraits for MemorySequence {}
 
     impl Sequence for MemorySequence {
         fn new() -> Self {
-            MemorySequence{ sequence: Vec::with_capacity(INITIAL_CAP) }
+            unimplemented!()
         }
 
-        fn new_with_sequence(seq: Vec<Entry>) -> Self {
-            MemorySequence{ sequence: seq }
+        fn new_shared_memory_sequence(sequence: *mut Vec<Entry>) -> Self {
+            MemorySequence{ sequence }
         }
 
         fn append_entry(&mut self, entry: Entry) {
-            self.sequence.push(entry);
+            unsafe { (*self.sequence).push(entry); }
+            // self.sequence.push(entry);
         }
 
         fn append_sequence(&mut self, seq: &mut Vec<Entry>) {
-            self.sequence.append(seq);
+            unsafe { (*self.sequence).append(seq); }
         }
 
         fn append_on_prefix(&mut self, from_idx: u64, seq: &mut Vec<Entry>, get_discarded: bool) -> Vec<Entry> {
             if get_discarded {
-                let discarded_entries: Vec<Entry> =
-                    self.sequence
+                let discarded_entries: Vec<Entry> = unsafe {
+                    (*self.sequence)
                         .drain(from_idx as usize..)
                         .filter( |e| !seq.contains(e) )
-                        .collect();
-
-                self.sequence.append(seq);
+                        .collect()
+                };
+                unsafe { (*self.sequence).append(seq); }
                 discarded_entries
             } else {
-                self.sequence.truncate(from_idx as usize);
-                self.sequence.append(seq);
+                unsafe {
+                    (*self.sequence).truncate(from_idx as usize);
+                    (*self.sequence).append(seq);
+                }
                 vec![]
             }
         }
 
         fn get_entries(&self, from: u64, to: u64) -> Vec<Entry> {
-            match self.sequence.get(from as usize..to as usize) {
+            let entries = unsafe {
+                (*self.sequence).get(from as usize..to as usize)
+            };
+            match entries {
                 Some(ents) => ents.to_vec(),
-                None => panic!("get_entries out of bounds. From: {}, To: {}, len: {}", from, to, self.sequence.len())
+                None => panic!("get_entries out of bounds. From: {}, To: {}, len: {}", from, to, unsafe{ (*self.sequence).len() })
             }
         }
 
         fn get_ser_entries(&self, from: u64, to: u64) -> Option<Vec<u8>> {
-            match self.sequence.get(from as usize..to as usize) {
+            let entries = unsafe {
+                (*self.sequence).get(from as usize..to as usize)
+            };
+            match entries {
                 Some(ents) => {
                     let mut bytes = Vec::with_capacity(((to - from) * 8) as usize);
                     PaxosSer::serialise_entries(ents, &mut bytes);
@@ -876,14 +877,20 @@ pub mod paxos {
         }
 
         fn get_suffix(&self, from: u64) -> Vec<Entry> {
-            match self.sequence.get(from as usize..) {
+            let entries = unsafe {
+                (*self.sequence).get(from as usize..)
+            };
+            match entries {
                 Some(s) => s.to_vec(),
                 None => vec![]
             }
         }
 
         fn get_ser_suffix(&self, from: u64) -> Option<Vec<u8>> {
-            match self.sequence.get(from as usize..) {
+            let entries = unsafe {
+                (*self.sequence).get(from as usize..)
+            };
+            match entries {
                 Some(s) => {
                     let len = s.len();
                     let mut bytes: Vec<u8> = Vec::with_capacity(len * 40);
@@ -894,16 +901,18 @@ pub mod paxos {
             }
         }
 
-        fn get_sequence(&self) -> Vec<Entry> {
-            self.sequence.clone()
-        }
-
         fn get_sequence_len(&self) -> u64 {
-            self.sequence.len() as u64
+            let sequence_len = unsafe {
+                (*self.sequence).len()
+            };
+            sequence_len as u64
         }
 
         fn stopped(&self) -> bool {
-             match self.sequence.last() {
+            let last = unsafe {
+                (*self.sequence).last()
+            };
+             match last{
                  Some(entry) => entry.is_stopsign(),
                  None => false
             }
@@ -914,38 +923,38 @@ pub mod paxos {
     pub struct MemoryState {
         n_prom: Ballot,
         acc_round: Ballot,
-        ld: u64,
+        ld: Arc<AtomicU64>,
         pending_chosen_offset: Option<u64>,
     }
 
     impl PaxosStateTraits for MemoryState {}
 
     impl PaxosState for MemoryState {
-        fn new() -> Self {
+        fn new(ld: Option<Arc<AtomicU64>>) -> Self {
             let ballot = Ballot::with(0, 0);
-            MemoryState{ n_prom: ballot.clone(), acc_round: ballot, ld: 0, pending_chosen_offset:  None }
+            MemoryState{ n_prom: ballot.clone(), acc_round: ballot, ld: ld.expect("No atomic ld"), pending_chosen_offset:  None }
         }
-
-        fn set_pending_chosen_offset(&mut self, offset: Option<u64>) { self.pending_chosen_offset = offset }
 
         fn set_promise(&mut self, nprom: Ballot) {
             self.n_prom = nprom;
         }
 
         fn set_decided_len(&mut self, ld: u64) {
-            self.ld = ld;
+            self.ld.fetch_max(ld, Ordering::Relaxed);
         }
 
         fn set_accepted_ballot(&mut self, na: Ballot) {
             self.acc_round = na;
         }
 
+        fn set_pending_chosen_offset(&mut self, offset: Option<u64>) { self.pending_chosen_offset = offset }
+
         fn get_accepted_ballot(&self) -> Ballot {
             self.acc_round.clone()
         }
 
         fn get_decided_len(&self) -> u64 {
-            self.ld
+            self.ld.load(Ordering::Relaxed)
         }
 
         fn get_promise(&self) -> Ballot {

@@ -1,3 +1,4 @@
+#![feature(atomic_min_max)] // used in MemorySequence in Paxos storage
 #[macro_use]
 extern crate benchmark_suite_shared;
 
