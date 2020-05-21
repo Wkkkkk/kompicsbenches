@@ -708,12 +708,8 @@ pub mod paxos {
             self.paxos_state.set_promise(nprom);
         }
 
-        pub fn set_decided_len(&mut self, ld: u64) -> u64 {
-            let prev_ld = self.get_decided_len();
-            if ld > prev_ld {
-                self.paxos_state.set_decided_len(ld);
-            }
-            prev_ld
+        pub fn set_decided_len(&mut self, ld: u64) {
+            self.paxos_state.set_decided_len(ld);
         }
 
         pub fn set_accepted_ballot(&mut self, na: Ballot) {

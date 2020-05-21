@@ -20,7 +20,7 @@ use std::sync::atomic::{AtomicU64, Ordering};
 
 const BLE: &str = "ble";
 const COMMUNICATOR: &str = "communicator";
-const INITIAL_CAPACITY: usize = 100;
+const INITIAL_CAPACITY: usize = 5000;
 
 pub trait SequenceTraits: Sequence + Debug + Send + Sync + 'static {}
 pub trait PaxosStateTraits: PaxosState + Send + 'static {}
@@ -162,13 +162,16 @@ impl<S, P> PaxosReplica<S, P> where
         /*** create atomic ld and mutable pointer to sequence ***/
         let ld = Arc::new(AtomicU64::new(0));
         let paxos_state = P::new(Some(ld.clone()));
+
         let mut seq = Vec::<Entry>::with_capacity(INITIAL_CAPACITY);
-        let immut_seq_ptr = ReadOnlySequence::with(&seq as *const Vec<Entry>);
-        let mut_seq_ptr = &mut seq as *mut Vec<Entry>;
+        self.paxos_sequences.insert(config_id, (ld.clone(), seq));
+        let (_ld, seq) = self.paxos_sequences.get_mut(&config_id).unwrap();    // Must first put into hashmap before creating pointers?
+
+        let immut_seq_ptr = ReadOnlySequence::with(seq as *const Vec<Entry>);
+        let mut_seq_ptr = seq as *mut Vec<Entry>;
         let paxos_seq = S::new_shared_memory_sequence(mut_seq_ptr);
         let storage = Storage::<S, P>::with(paxos_seq, paxos_state);
         let paxos = Paxos::with(config_id, self.pid, paxos_peers.clone(), storage, self.forward_discarded);
-        self.paxos_sequences.insert(config_id, (ld.clone(), seq));
         /*** create and register Paxos ***/
         let paxos_comp = system.create(|| {
             PaxosComp::with(self.ctx.actor_ref(), paxos_peers, config_id, self.pid, paxos, ld, immut_seq_ptr)
@@ -769,7 +772,7 @@ impl<S, P> PaxosComp<S, P> where
         let decided_entries = unsafe {
             (*(self.paxos_sequence.seq)).get(self.prev_ld as usize..ld as usize) // TODO can use get_unchecked?
         };
-        for decided in decided_entries.unwrap() {
+        for decided in decided_entries.expect(&format!("Should exist decided entries: prev_ld: {}, ld: {}", self.prev_ld, ld)) {
             match decided {
                 Entry::Normal(n) => {
                     if self.current_leader == self.pid || n.metadata.proposed_by == self.pid {    // TODO
@@ -1265,12 +1268,7 @@ pub mod raw_paxos{
 
         fn handle_decide(&mut self, dec: Decide) {
             if self.storage.get_promise() == dec.n {
-                let prev_ld = self.storage.set_decided_len(dec.ld);
-                // println!("Deciding: prev_ld: {}, ld: {}", prev_ld, dec.ld);
-                if prev_ld < dec.ld {
-                    let mut decided_entries = self.storage.get_entries(prev_ld, dec.ld);
-                    self.decided.append(&mut decided_entries);
-                }
+                self.storage.set_decided_len(dec.ld);
             }
         }
 
@@ -1702,44 +1700,29 @@ mod tests {
         }
         println!("PASSED!!!");
     }
-/*
+
     #[test]
-    fn reconfig_ser_des_test(){
-        let config_id = 1;
-        let from_idx = 2;
-        let to_idx = 3;
-        let tag = 4;
-        let continued_nodes = vec![5,6,7];
-        let new_nodes = vec![8,9,10];
-        let reconfig = Reconfig::with(continued_nodes.clone(), new_nodes.clone());
-        let len = 11;
-        let metadata = SequenceMetaData::with(config_id, len);
-        let pid = 12;
-        let req_init = ReconfigInit::with(config_id, reconfig.clone(), metadata.clone(), pid);
-        let mut bytes: Vec<u8> = vec![];
-        ReconfigSer.serialise(&ReconfigurationMsg::Init(req_init), &mut bytes).expect("Failed to serialise ReconfigInit");
-        let mut buf = bytes.as_slice();
-        if let Ok(ReconfigurationMsg::Init(des)) = ReconfigSer::deserialise(&mut buf) {
-            assert_eq!(des.config_id, config_id);
-            assert_eq!(des.nodes.continued_nodes, continued_nodes);
-            assert_eq!(des.nodes.new_nodes, new_nodes);
-            assert_eq!(des.seq_metadata.config_id, metadata.config_id);
-            assert_eq!(des.seq_metadata.len, metadata.len);
-            assert_eq!(des.from, pid);
-        }
-        let seq_ser = vec![1,2,3];
-        let st = SequenceTransfer::with(config_id, tag, true, from_idx, to_idx, seq_ser.clone(), metadata.clone());
-        bytes.clear();
-        ReconfigSer.serialise(&ReconfigurationMsg::SequenceTransfer(st), &mut bytes).expect("Failed to serialise SequenceTransfer");
-        buf = bytes.as_slice();
-        if let Ok(ReconfigurationMsg::SequenceTransfer(des)) = ReconfigSer::deserialise(&mut buf) {
-            assert_eq!(des.config_id, config_id);
-            assert_eq!(des.tag, tag);
-            assert_eq!(des.ser_entries, seq_ser);
-            assert_eq!(des.metadata.config_id, metadata.config_id);
-            assert_eq!(des.metadata.len, metadata.len);
-            assert_eq!(des.succeeded, true);
-        }
+    fn raw_paxos_test() {
+        use crate::bench::atomic_broadcast::messages::paxos::Decide;
+
+        let mut seq = Vec::<Entry>::with_capacity(5000);
+
+        let seq_ptr = &mut seq as *mut Vec<Entry>;
+        let mem_seq = MemorySequence::new_shared_memory_sequence(seq_ptr);
+
+        let ld = Arc::new(AtomicU64::new(0));
+        let mem_state = MemoryState::new(Some(ld.clone()));
+
+        let read_ptr = ReadOnlySequence::with(&seq as *const Vec<Entry>);
+        let read_ld = ld.clone();
+
+        let storage = Storage::<MemorySequence, MemoryState>::with(mem_seq, mem_state);
+        let mut paxos = Paxos::<MemorySequence, MemoryState>::with(1, 1, HashSet::new(), storage, false);
+
+        let decide = Decide::with(1, Ballot::with(0,0));
+        let msg = Message::with(0,0, PaxosMsg::Decide(decide));
+        paxos.handle(msg);
+
+        println!("ld : {}", ld.load(Ordering::Relaxed));
     }
-    */
 }
