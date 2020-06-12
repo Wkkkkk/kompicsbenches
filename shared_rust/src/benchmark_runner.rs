@@ -94,9 +94,9 @@ pub fn not_implemented() -> messages::TestResult {
     rm
 }
 
-pub(crate) const MIN_RUNS: usize = 30;
-pub(crate) const MAX_RUNS: usize = 100;
-pub(crate) const RSE_TARGET: f64 = 0.1; // 10% RSE
+pub(crate) const MIN_RUNS: usize = 1;
+pub(crate) const MAX_RUNS: usize = 1;
+pub(crate) const RSE_TARGET: f64 = 0.0; // 10% RSE
 pub(crate) const NS_TO_MS: f64 = 1.0 / (1000.0 * 1000.0);
 
 pub fn run<B: Benchmark>(_b: &B, c: &B::Conf) -> Result<Vec<f64>, BenchmarkError> {

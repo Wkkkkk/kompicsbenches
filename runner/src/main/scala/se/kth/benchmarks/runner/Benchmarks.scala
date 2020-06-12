@@ -59,6 +59,8 @@ case class BenchmarkWithSpace[Params](b: BenchmarkRun[Params],
       case BenchMode.CONVERGE => convergeSpace.get
     }
     var cached_conv_value = 0L;
+    var converge_count: Int = 0;
+    val converge_goal: Int = 5; // number of consecutive runs to be considered converged
     useSpace.foreach { p =>
       index += 1L;
       val res = run(stub, p);
@@ -71,7 +73,17 @@ case class BenchmarkWithSpace[Params](b: BenchmarkRun[Params],
                 val stats = new Statistics(data);
                 val mean = stats.sampleMean;
                 val calculated_conv_value = convergeFunction.get.apply(p, mean.toLong);
-                val converged = if (calculated_conv_value <= cached_conv_value) {
+                if (cached_conv_value == 0) {
+                  cached_conv_value = calculated_conv_value;
+                }
+                val converge_ratio: Float = calculated_conv_value.toFloat/cached_conv_value.toFloat;
+                println(s"Converge ratio: $converge_ratio");
+                if (converge_ratio <= 1.05) {
+                  converge_count += 1;
+                } else {
+                  converge_count = 0;
+                }
+                val converged = if (converge_count == converge_goal) {
                   Some(TestConverged(cached_conv_value, calculated_conv_value))
                 } else {
                   None
