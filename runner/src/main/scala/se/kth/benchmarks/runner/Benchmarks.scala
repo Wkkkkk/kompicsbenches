@@ -77,7 +77,7 @@ case class BenchmarkWithSpace[Params](b: BenchmarkRun[Params],
                   cached_conv_value = calculated_conv_value;
                 }
                 val converge_ratio: Float = calculated_conv_value.toFloat/cached_conv_value.toFloat;
-                println(s"Converge ratio: $converge_ratio");
+                println(s"Converge ratio: $converge_ratio, run took: ${mean.toLong/60000L} minutes");
                 if (converge_ratio <= 1.05) {
                   converge_count += 1;
                 } else {
