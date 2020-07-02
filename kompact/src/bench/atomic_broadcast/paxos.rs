@@ -724,7 +724,7 @@ pub mod raw_paxos{
     use super::super::storage::paxos::Storage;
     use super::{SequenceTraits, PaxosStateTraits};
     use std::fmt::Debug;
-    use std::collections::{HashMap, HashSet};
+    use hashbrown::HashMap;
     use std::mem;
     use std::sync::Arc;
     use indexmap::map::IndexMap;
