@@ -760,11 +760,12 @@ impl Proposal {
 pub struct ProposalResp {
     pub data: Vec<u8>,
     pub latest_leader: u64,
+    pub num_responses: usize,
 }
 
 impl ProposalResp {
-    pub fn with(data: Vec<u8>, latest_leader: u64) -> ProposalResp {
-        ProposalResp{ data, latest_leader }
+    pub fn with(data: Vec<u8>, latest_leader: u64, num_responses: usize) -> ProposalResp {
+        ProposalResp{ data, latest_leader, num_responses }
     }
 }
 
@@ -816,6 +817,7 @@ impl Serialisable for AtomicBroadcastMsg {
             },
             AtomicBroadcastMsg::ProposalResp(pr) => {
                 buf.put_u8(PROPOSALRESP_ID);
+                buf.put_u32(pr.num_responses as u32);
                 let data_len = pr.data.len() as u32;
                 buf.put_u32(data_len);
                 buf.put_slice(pr.data.as_slice());
@@ -864,6 +866,7 @@ impl Deserialiser<AtomicBroadcastMsg> for AtomicBroadcastDeser {
                 Ok(AtomicBroadcastMsg::Proposal(proposal))
             },
             PROPOSALRESP_ID => {
+                let num_responses = buf.get_u32() as usize;
                 let data_len = buf.get_u32() as usize;
                 let mut data = vec![0; data_len];
                 buf.copy_to_slice(&mut data);
@@ -871,6 +874,7 @@ impl Deserialiser<AtomicBroadcastMsg> for AtomicBroadcastDeser {
                 let pr = ProposalResp {
                     data,
                     latest_leader: last_leader,
+                    num_responses
                 };
                 Ok(AtomicBroadcastMsg::ProposalResp(pr))
             },

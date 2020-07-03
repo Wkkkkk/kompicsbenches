@@ -14,6 +14,7 @@ use hashbrown::{HashMap, HashSet};
 use super::parameters::{*, raft::*};
 use rand::Rng;
 use crate::serialiser_ids::ATOMICBCAST_ID;
+use crate::bench::atomic_broadcast::communicator::CommunicatorMsg::ProposalResponse;
 
 const COMMUNICATOR: &str = "communicator";
 const DELAY: Duration = Duration::from_millis(0);
@@ -541,6 +542,9 @@ impl<S> RaftComp<S> where S: RaftStorage + Send + Clone + 'static {
         let mut next_conf_change: Option<ConfChangeType> = None;
         // Apply all committed proposals.
         if let Some(committed_entries) = ready.committed_entries.take() {
+            let ents_len = committed_entries.len();
+            let mut ser_decided = Vec::<u8>::with_capacity(ents_len * DATA_SIZE_HINT);
+            let mut num_responses = 0;
             for entry in &committed_entries {
                 if entry.data.is_empty() {
                     // From new elected leaders.
@@ -586,10 +590,11 @@ impl<S> RaftComp<S> where S: RaftStorage + Send + Clone + 'static {
                             }
                             let cs = ConfState::from(current_conf);
                             store.set_conf_state(cs, None);
-                            let mut data: Vec<u8> = Vec::with_capacity(8);
+                            let mut data = Vec::with_capacity(DATA_SIZE_HINT);
                             data.put_u64(RECONFIG_ID);
-                            let pr = ProposalResp::with(data, self.raw_raft.raft.leader_id);
-                            self.communication_port.trigger(CommunicatorMsg::ProposalResponse(pr));
+                            ser_decided.put_u32(data.len() as u32);
+                            ser_decided.append(&mut data);
+                            num_responses += 1;
                         },
                         ConfChangeType::AddNode => {
                             debug!(self.ctx.log(), "AddNode {} OK", cc.node_id);
@@ -600,10 +605,11 @@ impl<S> RaftComp<S> where S: RaftStorage + Send + Clone + 'static {
                             if next_conf_change.is_none() {
                                 // info!(self.ctx.log(), "Reconfiguration finished!");
                                 self.reconfig_state = ReconfigurationState::Finished;
-                                let mut data: Vec<u8> = Vec::with_capacity(8);
+                                let mut data = Vec::with_capacity(DATA_SIZE_HINT);
                                 data.put_u64(RECONFIG_ID);
-                                let pr = ProposalResp::with(data, self.current_leader);  // use current_leader as removed node could be leader
-                                self.communication_port.trigger(CommunicatorMsg::ProposalResponse(pr));
+                                ser_decided.put_u32(data.len() as u32);
+                                ser_decided.append(&mut data);
+                                num_responses += 1;
                             }
                         },
                         ConfChangeType::RemoveNode => {
@@ -620,10 +626,11 @@ impl<S> RaftComp<S> where S: RaftStorage + Send + Clone + 'static {
                             if next_conf_change.is_none() {
                                 // info!(self.ctx.log(), "Reconfiguration finished!");
                                 self.reconfig_state = ReconfigurationState::Finished;
-                                let mut data: Vec<u8> = Vec::with_capacity(8);
+                                let mut data = Vec::with_capacity(DATA_SIZE_HINT);
                                 data.put_u64(RECONFIG_ID);
-                                let pr = ProposalResp::with(data, self.current_leader);  // use current_leader as removed node could be leader
-                                self.communication_port.trigger(CommunicatorMsg::ProposalResponse(pr));
+                                ser_decided.put_u32(data.len() as u32);
+                                ser_decided.append(&mut data);
+                                num_responses += 1;
                             }
                             if self.raw_raft.raft.id == cc.node_id {    // I was removed
                                 self.stop_timers();
@@ -635,10 +642,16 @@ impl<S> RaftComp<S> where S: RaftStorage + Send + Clone + 'static {
                     }
                 } else { // normal proposals
                     if self.raw_raft.raft.state == StateRole::Leader{
-                        let pr = ProposalResp::with(entry.get_data().to_vec(), self.raw_raft.raft.id);
-                        self.communication_port.trigger(CommunicatorMsg::ProposalResponse(pr));
+                        let mut data = entry.get_data().to_vec();
+                        ser_decided.put_u32(data.len() as u32);
+                        ser_decided.append(&mut data);
+                        num_responses += 1;
                     }
                 }
+            }
+            if num_responses > 0 {
+                let pr = ProposalResp::with(ser_decided, self.raw_raft.raft.leader_id, num_responses);
+                self.communication_port.trigger(CommunicatorMsg::ProposalResponse(pr));
             }
             if let Some(last_committed) = committed_entries.last() {
                 store.set_hard_state(last_committed.index, last_committed.term).expect("Failed to set hardstate");

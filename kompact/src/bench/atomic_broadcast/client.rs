@@ -4,6 +4,7 @@ use synchronoise::CountdownEvent;
 use hashbrown::HashMap;
 use super::messages::{Proposal, AtomicBroadcastMsg, AtomicBroadcastDeser, RECONFIG_ID};
 use std::time::{Duration, SystemTime};
+use crate::bench::atomic_broadcast::messages::ProposalResp;
 
 #[derive(PartialEq)]
 enum ExperimentState {
@@ -150,6 +151,71 @@ impl Client {
             self.cancel_timer(old_timer);
         }
     }
+
+    fn handle_responses(&mut self, pr: ProposalResp) {
+        let mut buf = pr.data.as_slice();
+        for _ in 0..pr.num_responses {
+            let data_len = buf.get_u32() as usize;
+            let mut ser_resp = vec![0; data_len];
+            buf.copy_to_slice(&mut ser_resp);
+            let response_id = ser_resp.as_slice().get_u64();
+            self.handle_response(response_id, pr.latest_leader);
+        }
+    }
+
+    fn handle_response(&mut self, id: u64, latest_leader: u64) {
+        if let Some(proposal_meta) = self.pending_proposals.remove(&id) {
+            match id {
+                RECONFIG_ID => {
+                    self.cancel_timer(proposal_meta.timer);
+                    if self.responses.len() as u64 == self.num_proposals {
+                        info!(self.ctx.log(), "Got reconfig at last");
+                        self.state = ExperimentState::Finished;
+                        self.finished_latch.decrement().expect("Failed to countdown finished latch");
+                    } else {
+                        self.reconfig = None;
+                        self.current_leader = latest_leader;
+                        // info!(self.ctx.log(), "Reconfig OK, leader: {}, retry_count: {}", self.current_leader, self.retry_count);
+                        if self.current_leader == 0 {
+                            self.state = ExperimentState::ReconfigurationElection;
+                        } else {
+                            self.send_concurrent_proposals();
+                        }
+                    }
+                },
+                _ => {
+                    let latency = match self.num_concurrent_proposals {
+                        1 => {
+                            let start_time = proposal_meta.start_time.expect("No start time found!");
+                            Some(start_time.elapsed().expect("Failed to get elapsed duration"))
+                        },
+                        _ => None,
+                    };
+                    self.cancel_timer(proposal_meta.timer);
+                    self.responses.insert(id, latency);
+                    let received_count = self.responses.len() as u64;
+                    if received_count == self.num_proposals && self.reconfig.is_none() {
+                        info!(self.ctx.log(), "Got all responses");
+                        self.state = ExperimentState::Finished;
+                        self.finished_latch.decrement().expect("Failed to countdown finished latch");
+                    } else {
+                        if received_count == self.num_proposals/2 && self.reconfig.is_some(){
+                            if let Some(leader) = self.nodes.get(&self.current_leader) {
+                                self.propose_reconfiguration(&leader);
+                            }
+                            let timer = self.schedule_once(self.timeout, move |c, _| c.retry_proposal(RECONFIG_ID));
+                            let proposal_meta = ProposalMetaData::with(None, timer);
+                            self.pending_proposals.insert(RECONFIG_ID, proposal_meta);
+                        }
+                        if self.state != ExperimentState::ReconfigurationElection {
+                            self.current_leader = latest_leader;
+                            self.send_concurrent_proposals();
+                        }
+                    }
+                }
+            }
+        }
+    }
 }
 
 impl Provide<ControlPort> for Client {
@@ -210,58 +276,7 @@ impl Actor for Client {
                     },
                     AtomicBroadcastMsg::ProposalResp(pr) => {
                         if self.state == ExperimentState::Finished || self.state == ExperimentState::LeaderElection { return; }
-                        let id = pr.data.as_slice().get_u64();
-                        if let Some(proposal_meta) = self.pending_proposals.remove(&id) {
-                            match id {
-                                RECONFIG_ID => {
-                                    self.cancel_timer(proposal_meta.timer);
-                                    if self.responses.len() as u64 == self.num_proposals {
-                                        info!(self.ctx.log(), "Got reconfig at last");
-                                        self.state = ExperimentState::Finished;
-                                        self.finished_latch.decrement().expect("Failed to countdown finished latch");
-                                    } else {
-                                        self.reconfig = None;
-                                        self.current_leader = pr.latest_leader;
-                                        // info!(self.ctx.log(), "Reconfig OK, leader: {}, retry_count: {}", self.current_leader, self.retry_count);
-                                        if self.current_leader == 0 {
-                                            self.state = ExperimentState::ReconfigurationElection;
-                                        } else {
-                                            self.send_concurrent_proposals();
-                                        }
-                                    }
-                                },
-                                _ => {
-                                    let latency = match self.num_concurrent_proposals {
-                                        1 => {
-                                            let start_time = proposal_meta.start_time.expect("No start time found!");
-                                            Some(start_time.elapsed().expect("Failed to get elapsed duration"))
-                                        },
-                                        _ => None,
-                                    };
-                                    self.cancel_timer(proposal_meta.timer);
-                                    self.responses.insert(id, latency);
-                                    let received_count = self.responses.len() as u64;
-                                    if received_count == self.num_proposals && self.reconfig.is_none() {
-                                        info!(self.ctx.log(), "Got all responses");
-                                        self.state = ExperimentState::Finished;
-                                        self.finished_latch.decrement().expect("Failed to countdown finished latch");
-                                    } else {
-                                        if received_count == self.num_proposals/2 && self.reconfig.is_some(){
-                                            if let Some(leader) = self.nodes.get(&self.current_leader) {
-                                                self.propose_reconfiguration(&leader);
-                                            }
-                                            let timer = self.schedule_once(self.timeout, move |c, _| c.retry_proposal(RECONFIG_ID));
-                                            let proposal_meta = ProposalMetaData::with(None, timer);
-                                            self.pending_proposals.insert(RECONFIG_ID, proposal_meta);
-                                        }
-                                        if self.state != ExperimentState::ReconfigurationElection {
-                                            self.current_leader = pr.latest_leader;
-                                            self.send_concurrent_proposals();
-                                        }
-                                    }
-                                }
-                            }
-                        }
+                        self.handle_responses(pr);
                     }
                     _ => error!(self.ctx.log(), "Client received unexpected msg"),
                 }
