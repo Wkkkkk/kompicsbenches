@@ -574,6 +574,8 @@ pub mod paxos {
 
         fn append_on_prefix(&mut self, from_idx: u64, seq: &mut Vec<Entry>);
 
+        fn get_entry(&self, idx: u64) -> Option<&Entry>;
+
         fn get_entries(&self, from: u64, to: u64) -> Vec<Entry>;
 
         fn get_ser_entries(&self, from: u64, to: u64) -> Option<Vec<u8>>;
@@ -586,7 +588,7 @@ pub mod paxos {
 
         fn get_sequence_len(&self) -> u64;
 
-        fn stopped(&self) -> bool;
+        fn get_last_entry(&self) -> Option<&Entry>;
     }
 
     pub trait PaxosState {
@@ -739,9 +741,26 @@ pub mod paxos {
             self.paxos_state.get_promise()
         }
 
+        pub fn get_latest_decided(&self) -> Option<&Entry> {
+            match self.sequence {
+                PaxosSequence::Active(ref s) => {
+                    let ld = self.paxos_state.get_decided_len();
+                    let idx = ld - 1;
+                    s.get_entry(idx)
+                },
+                PaxosSequence::Stopped(ref s) => s.get_last_entry(),
+                _ => panic!("Got unexpected intermediate PaxosSequence::None in stopped()"),
+            }
+        }
+
         pub fn stopped(&self) -> bool {
             match self.sequence {
-                PaxosSequence::Active(ref s) => s.stopped(),
+                PaxosSequence::Active(ref s) => {
+                    match s.get_last_entry() {
+                        Some(e) => e.is_stopsign(),
+                        _ => false,
+                    }
+                },
                 PaxosSequence::Stopped(_) => true,
                 _ => panic!("Got unexpected intermediate PaxosSequence::None in stopped()"),
             }
@@ -797,6 +816,10 @@ pub mod paxos {
             self.sequence.append(seq);
         }
 
+        fn get_entry(&self, idx: u64) -> Option<&Entry> {
+            self.sequence.get(idx as usize)
+        }
+
         fn get_entries(&self, from: u64, to: u64) -> Vec<Entry> {
             match self.sequence.get(from as usize..to as usize) {
                 Some(ents) => ents.to_vec(),
@@ -842,11 +865,8 @@ pub mod paxos {
             self.sequence.len() as u64
         }
 
-        fn stopped(&self) -> bool {
-             match self.sequence.last() {
-                 Some(entry) => entry.is_stopsign(),
-                 None => false
-            }
+        fn get_last_entry(&self) -> Option<&Entry> {
+             self.sequence.last()
         }
     }
 
