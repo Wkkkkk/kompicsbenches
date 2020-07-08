@@ -1,7 +1,7 @@
 use kompact::prelude::*;
 use std::sync::Arc;
 use synchronoise::CountdownEvent;
-use std::collections::HashMap;
+use hashbrown::HashMap;
 use super::messages::{Proposal, AtomicBroadcastMsg, AtomicBroadcastDeser, RECONFIG_ID};
 use std::time::{Duration, SystemTime};
 
@@ -16,7 +16,12 @@ enum ExperimentState {
 #[derive(Debug)]
 pub enum LocalClientMessage {
     Run,
-    GetMedianLatency(Ask<(), Duration>)
+    WriteLatencyFile(Ask<(), Vec<(u64, Duration)>>)
+}
+
+enum Response {
+    Normal(u64),
+    Reconfiguration(Vec<u64>)
 }
 
 #[derive(Debug)]
@@ -49,10 +54,12 @@ pub struct Client {
     current_leader: u64,
     state: ExperimentState,
     retry_after_reconfig: bool,
+    current_config: Vec<u64>
 }
 
 impl Client {
     pub fn with(
+        initial_config: Vec<u64>,
         num_proposals: u64,
         num_concurrent_proposals: u64,
         nodes: HashMap<u64, ActorPath>,
@@ -77,18 +84,23 @@ impl Client {
             current_leader: 0,
             state: ExperimentState::LeaderElection,
             retry_after_reconfig,
+            current_config: initial_config
         }
     }
 
     fn propose_normal(&self, id: u64, node: &ActorPath) {
-        let p = Proposal::normal(id);
+        let mut data: Vec<u8> = Vec::with_capacity(8);
+        data.put_u64(id);
+        let p = Proposal::normal(data);
         node.tell_serialised(AtomicBroadcastMsg::Proposal(p), self).expect("Should serialise Proposal");
     }
 
     fn propose_reconfiguration(&self, node: &ActorPath) {
         let reconfig = self.reconfig.as_ref().unwrap();
         debug!(self.ctx.log(), "{}", format!("Sending reconfiguration: {:?}", reconfig));
-        let p = Proposal::reconfiguration(RECONFIG_ID, reconfig.clone());
+        let mut data: Vec<u8> = Vec::with_capacity(8);
+        data.put_u64(RECONFIG_ID);
+        let p = Proposal::reconfiguration(data, reconfig.clone());
         node.tell_serialised(AtomicBroadcastMsg::Proposal(p), self).expect("Should serialise reconfig Proposal");
     }
 
@@ -121,6 +133,7 @@ impl Client {
     }
 
     fn retry_proposal(&mut self, id: u64) {
+        trace!(self.ctx.log(), "Retry proposal {}?", id);
         if self.responses.contains_key(&id) { panic!("Failed to cancel timer?"); }
         if let Some(leader) = self.nodes.get(&self.current_leader) {
             match id {
@@ -143,6 +156,20 @@ impl Client {
             let timer = self.schedule_once(self.timeout, move |c, _| c.retry_proposal(i));
             let old_timer = std::mem::replace(&mut meta.timer, timer);
             self.cancel_timer(old_timer);
+        }
+    }
+
+    fn deserialise_response(data: &mut dyn Buf) -> Response {
+        match data.get_u64() {
+            RECONFIG_ID => {
+                let len = data.get_u32();
+                let mut config = Vec::with_capacity(len as usize);
+                for _ in 0..len {
+                    config.push(data.get_u64());
+                }
+                Response::Reconfiguration(config)
+            },
+            n => Response::Normal(n),
         }
     }
 }
@@ -168,19 +195,12 @@ impl Actor for Client {
                 assert_ne!(self.current_leader, 0);
                 self.send_concurrent_proposals();
             },
-            LocalClientMessage::GetMedianLatency(ask) => {
+            LocalClientMessage::WriteLatencyFile(ask) => {
                 let l = std::mem::take(&mut self.responses);
-                let mut latencies: Vec<Duration> = l.values().into_iter().map(|latency| latency.unwrap() ).collect::<Vec<Duration>>();
-                latencies.sort();
-                let len = latencies.len();
-                assert_eq!(len as u64, self.num_proposals);
-                let mid = if len % 2 == 0 {
-                    (len/2 - 1 + len/2) / 2
-                } else {
-                    len/2
-                };
-                let median = latencies.get(mid).unwrap();
-                ask.reply(*median).expect("Failed to reply median latency!");
+                let mut v: Vec<_> = l.into_iter().collect();
+                v.sort();
+                let latencies: Vec<(u64, Duration)> = v.into_iter().map(|(id, latency)| (id, latency.unwrap()) ).collect();
+                ask.reply(latencies).expect("Failed to reply write latency file!");
             }
         }
     }
@@ -189,6 +209,7 @@ impl Actor for Client {
         let NetMessage{sender: _, receiver: _, data} = m;
         match_deser!{data; {
             am: AtomicBroadcastMsg [AtomicBroadcastDeser] => {
+                trace!(self.ctx.log(), "Handling {:?}", am);
                 match am {
                     AtomicBroadcastMsg::FirstLeader(pid) => {
                         self.current_leader = pid;
@@ -211,26 +232,11 @@ impl Actor for Client {
                     },
                     AtomicBroadcastMsg::ProposalResp(pr) => {
                         if self.state == ExperimentState::Finished || self.state == ExperimentState::LeaderElection { return; }
-                        if let Some(proposal_meta) = self.pending_proposals.remove(&pr.id) {
-                            self.cancel_timer(proposal_meta.timer);
-                            match pr.id {
-                                RECONFIG_ID => {
-                                    if self.responses.len() as u64 == self.num_proposals {
-                                        info!(self.ctx.log(), "Got reconfig at last");
-                                        self.state = ExperimentState::Finished;
-                                        self.finished_latch.decrement().expect("Failed to countdown finished latch");
-                                    } else {
-                                        self.reconfig = None;
-                                        self.current_leader = pr.latest_leader;
-                                        // info!(self.ctx.log(), "Reconfig OK, leader: {}, retry_count: {}", self.current_leader, self.retry_count);
-                                        if self.current_leader == 0 {
-                                            self.state = ExperimentState::ReconfigurationElection;
-                                        } else {
-                                            self.send_concurrent_proposals();
-                                        }
-                                    }
-                                },
-                                _ => {
+                        let data = pr.data;
+                        let response = Self::deserialise_response(&mut data.as_slice());
+                        match response {
+                            Response::Normal(id) => {
+                                if let Some(proposal_meta) = self.pending_proposals.remove(&id) {
                                     let latency = match self.num_concurrent_proposals {
                                         1 => {
                                             let start_time = proposal_meta.start_time.expect("No start time found!");
@@ -238,7 +244,8 @@ impl Actor for Client {
                                         },
                                         _ => None,
                                     };
-                                    self.responses.insert(pr.id, latency);
+                                    self.cancel_timer(proposal_meta.timer);
+                                    self.responses.insert(id, latency);
                                     let received_count = self.responses.len() as u64;
                                     if received_count == self.num_proposals && self.reconfig.is_none() {
                                         info!(self.ctx.log(), "Got all responses");
@@ -253,11 +260,32 @@ impl Actor for Client {
                                             let proposal_meta = ProposalMetaData::with(None, timer);
                                             self.pending_proposals.insert(RECONFIG_ID, proposal_meta);
                                         }
-                                        if self.state != ExperimentState::ReconfigurationElection {
+                                        if self.state != ExperimentState::ReconfigurationElection && self.current_config.contains(&pr.latest_leader) {
                                             self.current_leader = pr.latest_leader;
                                             self.send_concurrent_proposals();
                                         }
                                     }
+                                }
+                            }
+                            Response::Reconfiguration(new_config) => {
+                                if let Some(proposal_meta) = self.pending_proposals.remove(&RECONFIG_ID) {
+                                    self.cancel_timer(proposal_meta.timer);
+                                    if self.responses.len() as u64 == self.num_proposals {
+                                        info!(self.ctx.log(), "Got reconfig at last");
+                                        self.state = ExperimentState::Finished;
+                                        self.finished_latch.decrement().expect("Failed to countdown finished latch");
+                                    } else {
+                                        self.reconfig = None;
+                                        self.current_leader = pr.latest_leader;
+                                        // info!(self.ctx.log(), "Reconfig OK, leader: {}, retry_count: {}", self.current_leader, self.retry_count);
+                                        if self.current_leader == 0 {   // Paxos: wait for leader in new config
+                                            self.state = ExperimentState::ReconfigurationElection;
+                                        } else {    // Raft: continue if there is a leader
+                                            self.send_concurrent_proposals();
+                                        }
+                                    }
+                                    // info!(self.ctx.log(), "Reconfiguration succeeded: {:?}", new_config);
+                                    self.current_config = new_config;
                                 }
                             }
                         }

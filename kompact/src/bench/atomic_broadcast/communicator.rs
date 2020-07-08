@@ -4,7 +4,7 @@ use kompact::prelude::*;
 use super::messages::paxos::Message as RawPaxosMsg;
 use tikv_raft::prelude::Message as RawRaftMsg;
 use crate::bench::atomic_broadcast::messages::{ProposalResp, AtomicBroadcastMsg};
-use std::collections::HashMap;
+use hashbrown::HashMap;
 use crate::bench::atomic_broadcast::messages::{raft::RawRaftSer, paxos::PaxosSer, KillResponse};
 use crate::bench::atomic_broadcast::messages::raft::RaftMsg;
 
@@ -65,10 +65,12 @@ impl Provide<CommunicationPort> for Communicator {
                 receiver.tell_serialised(RaftMsg(rm), self).expect("Should serialise RaftMsg");
             },
             CommunicatorMsg::RawPaxosMsg(pm) => {
+                trace!(self.ctx.log(), "sending {:?}", pm);
                 let receiver = self.peers.get(&pm.to).unwrap_or_else(|| panic!("RawPaxosMsg: Could not find actorpath for id={}. Known peers: {:?}. PaxosMsg: {:?}", &pm.to, self.peers.keys(), pm));
                 receiver.tell_serialised(pm, self).expect("Should serialise RawPaxosMsg");
             },
             CommunicatorMsg::ProposalResponse(pr) => {
+                trace!(self.ctx.log(), "ProposalResp: {:?}", pr);
                 let am = AtomicBroadcastMsg::ProposalResp(pr);
                 self.client.tell_serialised(am, self).expect("Should serialise ProposalResp");
             },

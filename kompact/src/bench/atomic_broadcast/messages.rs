@@ -73,12 +73,11 @@ pub mod paxos {
         pub n_accepted: Ballot,
         pub sfx: Vec<Entry>,
         pub ld: u64,
-        pub ser_sfx: Option<Vec<u8>>
     }
 
     impl Promise {
         pub fn with(n: Ballot, n_accepted: Ballot, sfx: Vec<Entry>, ld: u64) -> Promise {
-            Promise { n, n_accepted, sfx, ld, ser_sfx: None }
+            Promise { n, n_accepted, sfx, ld, }
         }
     }
 
@@ -99,12 +98,12 @@ pub mod paxos {
     #[derive(Clone, Debug)]
     pub struct Accept {
         pub n: Ballot,
-        pub entry: Entry,
+        pub entries: Vec<Entry>,
     }
 
     impl Accept {
-        pub fn with(n: Ballot, entry: Entry) -> Accept {
-            Accept{ n, entry }
+        pub fn with(n: Ballot, entries: Vec<Entry>) -> Accept {
+            Accept{ n, entries }
         }
     }
 
@@ -239,6 +238,14 @@ pub mod paxos {
             }
             ents
         }
+
+        pub fn deserialise_entries_into(buf: &mut dyn Buf, target: &mut Vec<Entry>, idx_offset: usize) {
+            let len = buf.get_u32() as usize;
+            for i in 0..len {
+                let entry = Self::deserialise_entry(buf);
+                target[idx_offset + i] = entry;
+            }
+        }
     }
 
     impl Serialisable for Message {
@@ -274,10 +281,7 @@ pub mod paxos {
                     PaxosSer::serialise_ballot(&p.n, buf);
                     PaxosSer::serialise_ballot(&p.n_accepted, buf);
                     buf.put_u64(p.ld);
-                    match &p.ser_sfx {
-                        Some(ser_sfx) => buf.put_slice(ser_sfx.as_slice()),
-                        None => PaxosSer::serialise_entries(&p.sfx, buf),
-                    }
+                    PaxosSer::serialise_entries(&p.sfx, buf);
                 },
                 PaxosMsg::AcceptSync(acc_sync) => {
                     buf.put_u8(ACCEPTSYNC_ID);
@@ -290,7 +294,7 @@ pub mod paxos {
                 PaxosMsg::Accept(a) => {
                     buf.put_u8(ACCEPT_ID);
                     PaxosSer::serialise_ballot(&a.n, buf);
-                    PaxosSer::serialise_entry(&a.entry, buf);
+                    PaxosSer::serialise_entries(&a.entries, buf);
                 },
                 PaxosMsg::Accepted(acc) => {
                     buf.put_u8(ACCEPTED_ID);
@@ -353,8 +357,8 @@ pub mod paxos {
                 },
                 ACCEPT_ID => {
                     let n = Self::deserialise_ballot(buf);
-                    let entry = Self::deserialise_entry(buf);
-                    let a = Accept::with(n, entry);
+                    let entries = Self::deserialise_entries(buf);
+                    let a = Accept::with(n, entries);
                     let msg = Message::with(from, to, PaxosMsg::Accept(a));
                     Ok(msg)
                 },
@@ -406,7 +410,7 @@ pub mod paxos {
         pub succeeded: bool,
         pub from_idx: u64,
         pub to_idx: u64,
-        pub ser_entries: Vec<u8>,
+        pub entries: Vec<Entry>,
         pub metadata: SequenceMetaData
     }
 
@@ -417,10 +421,10 @@ pub mod paxos {
             succeeded: bool,
             from_idx: u64,
             to_idx: u64,
-            ser_entries: Vec<u8>,
+            entries: Vec<Entry>,
             metadata: SequenceMetaData
         ) -> SequenceTransfer {
-            SequenceTransfer { config_id, tag, succeeded, from_idx, to_idx, ser_entries, metadata }
+            SequenceTransfer { config_id, tag, succeeded, from_idx, to_idx, entries, metadata }
         }
     }
 
@@ -522,9 +526,7 @@ pub mod paxos {
                     buf.put_u64(st.to_idx);
                     buf.put_u32(st.metadata.config_id);
                     buf.put_u64(st.metadata.len);
-                    let len = st.ser_entries.len() as u64;
-                    buf.put_u64(len);
-                    buf.put_slice(st.ser_entries.as_slice());
+                    PaxosSer::serialise_entries(st.entries.as_slice(), buf);
                 }
             }
             Ok(())
@@ -576,11 +578,9 @@ pub mod paxos {
                     let to_idx = buf.get_u64();
                     let metadata_config_id = buf.get_u32();
                     let metadata_seq_len = buf.get_u64();
-                    let n = buf.get_u64() as usize;
-                    let mut seq_ser: Vec<u8> = vec![0; n];
-                    buf.copy_to_slice(&mut seq_ser);
+                    let entries = PaxosSer::deserialise_entries(buf);
                     let metadata = SequenceMetaData::with(metadata_config_id, metadata_seq_len);
-                    let st = SequenceTransfer::with(config_id, tag, succeeded, from_idx, to_idx, seq_ser, metadata);
+                    let st = SequenceTransfer::with(config_id, tag, succeeded, from_idx, to_idx, entries, metadata);
                     Ok(ReconfigurationMsg::SequenceTransfer(st))
                 }
                 _ => {
@@ -734,22 +734,22 @@ pub const RECONFIG_ID: u64 = 0;
 
 #[derive(Clone, Debug)]
 pub struct Proposal {
-    pub id: u64,
+    pub data: Vec<u8>,
     pub reconfig: Option<(Vec<u64>, Vec<u64>)>,
 }
 
 impl Proposal {
-    pub fn reconfiguration(id: u64, reconfig: (Vec<u64>, Vec<u64>)) -> Proposal {
+    pub fn reconfiguration(data: Vec<u8>, reconfig: (Vec<u64>, Vec<u64>)) -> Proposal {
         let proposal = Proposal {
-            id,
+            data,
             reconfig: Some(reconfig),
         };
         proposal
     }
 
-    pub fn normal(id: u64) -> Proposal {
+    pub fn normal(data: Vec<u8>) -> Proposal {
         let proposal = Proposal {
-            id,
+            data,
             reconfig: None,
         };
         proposal
@@ -758,13 +758,13 @@ impl Proposal {
 
 #[derive(Clone, Debug)]
 pub struct ProposalResp {
-    pub id: u64,
+    pub data: Vec<u8>,
     pub latest_leader: u64,
 }
 
 impl ProposalResp {
-    pub fn with(id: u64, latest_leader: u64) -> ProposalResp {
-        ProposalResp{ id, latest_leader }
+    pub fn with(data: Vec<u8>, latest_leader: u64) -> ProposalResp {
+        ProposalResp{ data, latest_leader }
     }
 }
 
@@ -792,7 +792,9 @@ impl Serialisable for AtomicBroadcastMsg {
         match self {
             AtomicBroadcastMsg::Proposal(p) => {
                 buf.put_u8(PROPOSAL_ID);
-                buf.put_u64(p.id);
+                let data_len = p.data.len() as u32;
+                buf.put_u32(data_len);
+                buf.put_slice(p.data.as_slice());
                 match &p.reconfig {
                     Some((voters, followers)) => {
                         let voters_len: u32 = voters.len() as u32;
@@ -814,7 +816,9 @@ impl Serialisable for AtomicBroadcastMsg {
             },
             AtomicBroadcastMsg::ProposalResp(pr) => {
                 buf.put_u8(PROPOSALRESP_ID);
-                buf.put_u64(pr.id);
+                let data_len = pr.data.len() as u32;
+                buf.put_u32(data_len);
+                buf.put_slice(pr.data.as_slice());
                 buf.put_u64(pr.latest_leader);
             },
             AtomicBroadcastMsg::FirstLeader(pid) => {
@@ -838,12 +842,14 @@ impl Deserialiser<AtomicBroadcastMsg> for AtomicBroadcastDeser {
     fn deserialise(buf: &mut dyn Buf) -> Result<AtomicBroadcastMsg, SerError> {
         match buf.get_u8(){
             PROPOSAL_ID => {
-                let id = buf.get_u64();
-                let voters_len = buf.get_u32();
-                let mut voters = vec![];
+                let data_len = buf.get_u32() as usize;
+                let mut data = vec![0; data_len];
+                buf.copy_to_slice(&mut data);
+                let voters_len = buf.get_u32() as usize;
+                let mut voters = Vec::with_capacity(voters_len);
                 for _ in 0..voters_len { voters.push(buf.get_u64()); }
-                let followers_len = buf.get_u32();
-                let mut followers = vec![];
+                let followers_len = buf.get_u32() as usize;
+                let mut followers = Vec::with_capacity(followers_len);
                 for _ in 0..followers_len { followers.push(buf.get_u64()); }
                 let reconfig =
                     if voters_len == 0 && followers_len == 0 {
@@ -852,16 +858,18 @@ impl Deserialiser<AtomicBroadcastMsg> for AtomicBroadcastDeser {
                         Some((voters, followers))
                     };
                 let proposal = Proposal {
-                    id,
+                    data,
                     reconfig
                 };
                 Ok(AtomicBroadcastMsg::Proposal(proposal))
             },
             PROPOSALRESP_ID => {
-                let id = buf.get_u64();
+                let data_len = buf.get_u32() as usize;
+                let mut data = vec![0; data_len];
+                buf.copy_to_slice(&mut data);
                 let last_leader = buf.get_u64();
                 let pr = ProposalResp {
-                    id,
+                    data,
                     latest_leader: last_leader,
                 };
                 Ok(AtomicBroadcastMsg::ProposalResp(pr))
