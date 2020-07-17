@@ -308,10 +308,10 @@ object Benchmarks extends ParameterDescriptionImplicits {
   private val atomicBroadcastTestConcurrentProposals = List(2L.k);
 
   private val atomicBroadcastNodes = List(3, 5);
-  private val atomicBroadcastProposals = List(10L.mio);
-  private val atomicBroadcastConcurrentProposals = List(1L.k, 10L.k, 100L.k);
+  private val atomicBroadcastProposals = List(20L.mio);
+  private val atomicBroadcastConcurrentProposals = List(10L.k, 100L.k, 1L.mio);
 
-  private val raft = List("raft-nobatch", "raft-batch");
+  private val raft = List("raft-batch");
   private val raft_reconfig = List("joint-consensus-remove-leader", "joint-consensus-remove-follower");
 
   private val paxos_reconfig = List("pull", "eager");
