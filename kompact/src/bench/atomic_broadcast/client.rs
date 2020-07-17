@@ -2,8 +2,9 @@ use kompact::prelude::*;
 use std::sync::Arc;
 use synchronoise::CountdownEvent;
 use hashbrown::HashMap;
-use super::messages::{Proposal, AtomicBroadcastMsg, AtomicBroadcastDeser, RECONFIG_ID};
+use super::messages::{Proposal, AtomicBroadcastMsg, AtomicBroadcastDeser, RECONFIG_ID, StopMsg as NetStopMsg};
 use std::time::{Duration, SystemTime};
+use synchronoise::event::CountdownError;
 
 #[derive(PartialEq)]
 enum ExperimentState {
@@ -16,7 +17,8 @@ enum ExperimentState {
 #[derive(Debug)]
 pub enum LocalClientMessage {
     Run,
-    WriteLatencyFile(Ask<(), Vec<(u64, Duration)>>)
+    Stop,
+    GetMetaResults(Ask<(), (u64, Vec<(u64, Duration)>)>)    // (num_timed_out, latency)
 }
 
 enum Response {
@@ -53,8 +55,8 @@ pub struct Client {
     timeout: Duration,
     current_leader: u64,
     state: ExperimentState,
-    retry_after_reconfig: bool,
-    current_config: Vec<u64>
+    current_config: Vec<u64>,
+    num_timed_out: u64,
 }
 
 impl Client {
@@ -67,7 +69,6 @@ impl Client {
         timeout: u64,
         leader_election_latch: Arc<CountdownEvent>,
         finished_latch: Arc<CountdownEvent>,
-        retry_after_reconfig: bool,
     ) -> Client {
         Client {
             ctx: ComponentContext::new(),
@@ -83,8 +84,8 @@ impl Client {
             timeout: Duration::from_millis(timeout),
             current_leader: 0,
             state: ExperimentState::LeaderElection,
-            retry_after_reconfig,
-            current_config: initial_config
+            current_config: initial_config,
+            num_timed_out: 0
         }
     }
 
@@ -123,8 +124,8 @@ impl Client {
                 _ => None,
             };
             let leader = self.nodes.get(&self.current_leader).unwrap();
-            self.propose_normal(id.clone(), leader);
-            let timer = self.schedule_once(self.timeout, move |c, _| c.retry_proposal(id));
+            self.propose_normal(id, leader);
+            let timer = self.schedule_once(self.timeout, move |c, _| c.proposal_timeout(id));
             let proposal_meta = ProposalMetaData::with(current_time, timer);
             self.pending_proposals.insert(id, proposal_meta);
         }
@@ -132,28 +133,59 @@ impl Client {
         self.latest_proposal_id = to;
     }
 
-    fn retry_proposal(&mut self, id: u64) {
-        trace!(self.ctx.log(), "Retry proposal {}?", id);
-        if self.responses.contains_key(&id) { panic!("Failed to cancel timer?"); }
-        if let Some(leader) = self.nodes.get(&self.current_leader) {
-            match id {
-                RECONFIG_ID => self.propose_reconfiguration(leader),
-                _ => self.propose_normal(id, leader)
+    fn handle_normal_response(&mut self, id: u64, latency_res: Option<Duration>) {
+        self.responses.insert(id, latency_res);
+        let received_count = self.responses.len() as u64;
+        if received_count == self.num_proposals && self.reconfig.is_none() {
+            self.state = ExperimentState::Finished;
+            self.finished_latch.decrement().expect("Failed to countdown finished latch");
+            info!(self.ctx.log(), "Got all responses. {} proposals timed out.", self.num_timed_out);
+        } else if received_count == self.num_proposals/2 && self.reconfig.is_some() {
+            if let Some(leader) = self.nodes.get(&self.current_leader) {
+                self.propose_reconfiguration(&leader);
             }
-            self.state = ExperimentState::Running;
+            let timer = self.schedule_once(self.timeout, move |c, _| c.proposal_timeout(RECONFIG_ID));
+            let proposal_meta = ProposalMetaData::with(None, timer);
+            self.pending_proposals.insert(RECONFIG_ID, proposal_meta);
         }
-        let timer = self.schedule_once(self.timeout, move |c, _| c.retry_proposal(id));
-        let proposal_meta = self.pending_proposals.get_mut(&id)
-            .expect(&format!("Could not find pending proposal id {}, latest_proposal_id: {}", id, self.latest_proposal_id));
-        proposal_meta.set_timer(timer);
+    }
+
+    fn proposal_timeout(&mut self, id: u64) {
+        if self.responses.contains_key(&id) { return; }
+        // info!(self.ctx.log(), "Timed out proposal {}", id);
+        if id == RECONFIG_ID {
+            if let Some(leader) = self.nodes.get(&self.current_leader) {
+                self.propose_reconfiguration(leader);
+                self.state = ExperimentState::Running;
+            }
+            let timer = self.schedule_once(self.timeout, move |c, _| c.proposal_timeout(id));
+            let proposal_meta = self.pending_proposals.get_mut(&id)
+                .expect(&format!("Could not find pending proposal id {}, latest_proposal_id: {}", id, self.latest_proposal_id));
+            proposal_meta.set_timer(timer);
+        } else {
+            self.num_timed_out += 1;
+            let proposal_meta = self.pending_proposals.remove(&id).expect("Timed out on proposal not in pending proposals");
+            let latency = match self.num_concurrent_proposals {
+                1 => {
+                    let start_time = proposal_meta.start_time.expect("No start time found!");
+                    Some(start_time.elapsed().expect("Failed to get elapsed duration"))
+                },
+                _ => None,
+            };
+            self.handle_normal_response(id, latency);
+            if self.state != ExperimentState::ReconfigurationElection {
+                self.send_concurrent_proposals();
+            }
+        }
     }
 
     fn retry_after_reconfig(&mut self, pending_proposals: &mut HashMap<u64, ProposalMetaData>) {
         let leader = self.nodes.get(&self.current_leader).unwrap().clone();
+        // info!(self.ctx.log(), "Retrying {} proposals after reconfig to leader {}", pending_proposals.len(), self.current_leader);
         for (id, meta) in pending_proposals {
-            self.propose_normal(*id, &leader);
-            let i = id.clone();
-            let timer = self.schedule_once(self.timeout, move |c, _| c.retry_proposal(i));
+            let i = *id;
+            self.propose_normal(i, &leader);
+            let timer = self.schedule_once(self.timeout, move |c, _| c.proposal_timeout(i));
             let old_timer = std::mem::replace(&mut meta.timer, timer);
             self.cancel_timer(old_timer);
         }
@@ -170,6 +202,12 @@ impl Client {
                 Response::Reconfiguration(config)
             },
             n => Response::Normal(n),
+        }
+    }
+
+    fn send_stop(&self) {
+        for ap in self.nodes.values() {
+            ap.tell_serialised(NetStopMsg::Client, self).expect("Failed to send Client stop");
         }
     }
 }
@@ -195,12 +233,20 @@ impl Actor for Client {
                 assert_ne!(self.current_leader, 0);
                 self.send_concurrent_proposals();
             },
-            LocalClientMessage::WriteLatencyFile(ask) => {
-                let l = std::mem::take(&mut self.responses);
-                let mut v: Vec<_> = l.into_iter().collect();
-                v.sort();
-                let latencies: Vec<(u64, Duration)> = v.into_iter().map(|(id, latency)| (id, latency.unwrap()) ).collect();
-                ask.reply(latencies).expect("Failed to reply write latency file!");
+            LocalClientMessage::Stop => {
+                self.send_stop();
+            },
+            LocalClientMessage::GetMetaResults(ask) => {
+                let meta_results = if self.num_concurrent_proposals > 1 {
+                    (self.num_timed_out, vec![])
+                } else {
+                    let l = std::mem::take(&mut self.responses);
+                    let mut v: Vec<_> = l.into_iter().collect();
+                    v.sort();
+                    let latencies: Vec<(u64, Duration)> = v.into_iter().map(|(id, latency)| (id, latency.unwrap()) ).collect();
+                    (self.num_timed_out, latencies)
+                };
+                ask.reply(meta_results).expect("Failed to reply write latency file!");
             }
         }
     }
@@ -212,21 +258,27 @@ impl Actor for Client {
                 trace!(self.ctx.log(), "Handling {:?}", am);
                 match am {
                     AtomicBroadcastMsg::FirstLeader(pid) => {
-                        self.current_leader = pid;
+                        if !self.current_config.contains(&pid) { return; }
                         match self.state {
                             ExperimentState::LeaderElection => {
-                                info!(self.ctx.log(), "Got first leader: {}. Decrementing election latch", pid);
-                                self.leader_election_latch.decrement().expect("Failed to decrement leader election latch!");
+                                self.current_leader = pid;
+                                match self.leader_election_latch.decrement() {
+                                    Ok(_) => info!(self.ctx.log(), "Got first leader: {}", pid),
+                                    Err(e) => if e != CountdownError::AlreadySet {
+                                        panic!("Failed to decrement election latch: {:?}", e);
+                                    }
+                                }
                             },
                             ExperimentState::ReconfigurationElection => {
-                                if self.current_leader > 0 && self.retry_after_reconfig && !self.pending_proposals.is_empty() {
+                                self.current_leader = pid;
+                                // info!(self.ctx.log(), "Got leader in ReconfigElection: {}", pid);
+                                if !self.pending_proposals.is_empty() {
                                     let mut pending_proposals = std::mem::take(&mut self.pending_proposals);
                                     self.retry_after_reconfig(&mut pending_proposals);
                                     self.pending_proposals = pending_proposals;
                                 }
                                 self.send_concurrent_proposals();
                             },
-                            ExperimentState::Running => self.send_concurrent_proposals(),
                             _ => {},
                         }
                     },
@@ -245,25 +297,12 @@ impl Actor for Client {
                                         _ => None,
                                     };
                                     self.cancel_timer(proposal_meta.timer);
-                                    self.responses.insert(id, latency);
-                                    let received_count = self.responses.len() as u64;
-                                    if received_count == self.num_proposals && self.reconfig.is_none() {
-                                        info!(self.ctx.log(), "Got all responses");
-                                        self.state = ExperimentState::Finished;
-                                        self.finished_latch.decrement().expect("Failed to countdown finished latch");
-                                    } else {
-                                        if received_count == self.num_proposals/2 && self.reconfig.is_some(){
-                                            if let Some(leader) = self.nodes.get(&self.current_leader) {
-                                                self.propose_reconfiguration(&leader);
-                                            }
-                                            let timer = self.schedule_once(self.timeout, move |c, _| c.retry_proposal(RECONFIG_ID));
-                                            let proposal_meta = ProposalMetaData::with(None, timer);
-                                            self.pending_proposals.insert(RECONFIG_ID, proposal_meta);
-                                        }
-                                        if self.state != ExperimentState::ReconfigurationElection && self.current_config.contains(&pr.latest_leader) {
-                                            self.current_leader = pr.latest_leader;
-                                            self.send_concurrent_proposals();
-                                        }
+                                    if self.current_config.contains(&pr.latest_leader) {
+                                        self.current_leader = pr.latest_leader;
+                                    }
+                                    self.handle_normal_response(id, latency);
+                                    if self.state != ExperimentState::ReconfigurationElection {
+                                        self.send_concurrent_proposals();
                                     }
                                 }
                             }
@@ -271,21 +310,20 @@ impl Actor for Client {
                                 if let Some(proposal_meta) = self.pending_proposals.remove(&RECONFIG_ID) {
                                     self.cancel_timer(proposal_meta.timer);
                                     if self.responses.len() as u64 == self.num_proposals {
-                                        info!(self.ctx.log(), "Got reconfig at last");
                                         self.state = ExperimentState::Finished;
                                         self.finished_latch.decrement().expect("Failed to countdown finished latch");
+                                        info!(self.ctx.log(), "Got reconfig at last");
                                     } else {
                                         self.reconfig = None;
+                                        self.current_config = new_config;
                                         self.current_leader = pr.latest_leader;
-                                        // info!(self.ctx.log(), "Reconfig OK, leader: {}, retry_count: {}", self.current_leader, self.retry_count);
+                                        // info!(self.ctx.log(), "Reconfig OK, leader: {}, current_config: {:?}", self.current_leader, self.current_config);
                                         if self.current_leader == 0 {   // Paxos or Raft-remove-leader: wait for leader in new config
                                             self.state = ExperimentState::ReconfigurationElection;
                                         } else {    // Raft: continue if there is a leader
                                             self.send_concurrent_proposals();
                                         }
                                     }
-                                    // info!(self.ctx.log(), "Reconfiguration succeeded: {:?}", new_config);
-                                    self.current_config = new_config;
                                 }
                             }
                         }

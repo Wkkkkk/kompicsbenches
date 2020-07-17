@@ -574,8 +574,6 @@ pub mod paxos {
 
         fn append_on_prefix(&mut self, from_idx: u64, seq: &mut Vec<Entry>);
 
-        fn get_entry(&self, idx: u64) -> Option<Entry>;
-
         fn get_entries(&self, from: u64, to: u64) -> &[Entry];
 
         fn get_ser_entries(&self, from: u64, to: u64) -> Option<Vec<u8>>;
@@ -689,16 +687,8 @@ pub mod paxos {
             self.paxos_state.set_promise(nprom);
         }
 
-        /*pub fn set_decided_len(&mut self, ld: u64) {
+        pub fn set_decided_len(&mut self, ld: u64) {
             self.paxos_state.set_decided_len(ld);
-        }*/
-
-        pub fn decide(&mut self, ld: u64) -> Entry {
-            self.paxos_state.set_decided_len(ld);
-            match &self.sequence {
-                PaxosSequence::Active(s) => s.get_entry(ld-1).expect("No entry found!"),
-                _ => panic!("Should not decide if not in Active state!")
-            }
         }
 
         pub fn set_accepted_ballot(&mut self, na: Ballot) {
@@ -797,10 +787,6 @@ pub mod paxos {
         fn append_on_prefix(&mut self, from_idx: u64, seq: &mut Vec<Entry>) {
             self.sequence.truncate(from_idx as usize);
             self.sequence.append(seq);
-        }
-
-        fn get_entry(&self, idx: u64) -> Option<Entry> {
-            self.sequence.get(idx as usize).cloned()
         }
 
         fn get_entries(&self, from: u64, to: u64) -> &[Entry] {
