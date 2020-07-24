@@ -3,7 +3,7 @@ extern crate raft as tikv_raft;
 use kompact::prelude::*;
 use super::messages::paxos::Message as RawPaxosMsg;
 use tikv_raft::prelude::Message as RawRaftMsg;
-use crate::bench::atomic_broadcast::messages::{ProposalResp, AtomicBroadcastMsg};
+use crate::bench::atomic_broadcast::messages::{ProposalResp, AtomicBroadcastMsg, StopMsg as NetStopMsg, StopMsgDeser};
 use hashbrown::HashMap;
 use crate::bench::atomic_broadcast::messages::{raft::RawRaftSer, paxos::PaxosSer, KillResponse};
 use crate::bench::atomic_broadcast::messages::raft::RaftMsg;
@@ -12,6 +12,7 @@ use crate::bench::atomic_broadcast::messages::raft::RaftMsg;
 pub enum AtomicBroadcastCompMsg {
     RawRaftMsg(RawRaftMsg),
     RawPaxosMsg(RawPaxosMsg),
+    StopMsg(u64),
 }
 
 #[derive(Clone, Debug)]
@@ -19,6 +20,8 @@ pub enum CommunicatorMsg {
     RawRaftMsg(RawRaftMsg),
     RawPaxosMsg(RawPaxosMsg),
     ProposalResponse(ProposalResp),
+    PendingReconfiguration,
+    SendStop(u64)
 }
 
 pub struct CommunicationPort;
@@ -74,6 +77,15 @@ impl Provide<CommunicationPort> for Communicator {
                 let am = AtomicBroadcastMsg::ProposalResp(pr);
                 self.client.tell_serialised(am, self).expect("Should serialise ProposalResp");
             },
+            CommunicatorMsg::PendingReconfiguration => {
+                self.client.tell_serialised(AtomicBroadcastMsg::PendingReconfiguration, self).expect("Should serialise PendingReconfiguration");
+            }
+            CommunicatorMsg::SendStop(my_pid) => {
+                trace!(self.ctx.log(), "Sending stop");
+                for ap in self.peers.values() {
+                    ap.tell_serialised(NetStopMsg::Peer(my_pid), self).expect("Should serialise StopMsg")
+                }
+            },
         }
     }
 }
@@ -93,6 +105,11 @@ impl Actor for Communicator {
             },
             p: RawPaxosMsg [PaxosSer] => {
                 self.atomic_broadcast_port.trigger(AtomicBroadcastCompMsg::RawPaxosMsg(p));
+            },
+            stop: NetStopMsg [StopMsgDeser] => {
+                if let NetStopMsg::Peer(pid) = stop {
+                    self.atomic_broadcast_port.trigger(AtomicBroadcastCompMsg::StopMsg(pid));
+                }
             },
             !Err(e) => error!(self.ctx.log(), "Error deserialising msg: {:?}", e),
         }

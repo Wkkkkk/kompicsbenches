@@ -238,14 +238,6 @@ pub mod paxos {
             }
             ents
         }
-
-        pub fn deserialise_entries_into(buf: &mut dyn Buf, target: &mut Vec<Entry>, idx_offset: usize) {
-            let len = buf.get_u32() as usize;
-            for i in 0..len {
-                let entry = Self::deserialise_entry(buf);
-                target[idx_offset + i] = entry;
-            }
-        }
     }
 
     impl Serialisable for Message {
@@ -772,12 +764,14 @@ impl ProposalResp {
 pub enum AtomicBroadcastMsg {
     Proposal(Proposal),
     ProposalResp(ProposalResp),
-    FirstLeader(u64)
+    FirstLeader(u64),
+    PendingReconfiguration,
 }
 
 const PROPOSAL_ID: u8 = 1;
 const PROPOSALRESP_ID: u8 = 2;
 const FIRSTLEADER_ID: u8 = 3;
+const PENDINGRECONFIG_ID: u8 = 4;
 
 impl Serialisable for AtomicBroadcastMsg {
     fn ser_id(&self) -> u64 {
@@ -824,6 +818,9 @@ impl Serialisable for AtomicBroadcastMsg {
             AtomicBroadcastMsg::FirstLeader(pid) => {
                 buf.put_u8(FIRSTLEADER_ID);
                 buf.put_u64(*pid);
+            },
+            AtomicBroadcastMsg::PendingReconfiguration => {
+                buf.put_u8(PENDINGRECONFIG_ID);
             }
         }
         Ok(())
@@ -877,7 +874,8 @@ impl Deserialiser<AtomicBroadcastMsg> for AtomicBroadcastDeser {
             FIRSTLEADER_ID => {
                 let pid = buf.get_u64();
                 Ok(AtomicBroadcastMsg::FirstLeader(pid))
-            }
+            },
+            PENDINGRECONFIG_ID => Ok(AtomicBroadcastMsg::PendingReconfiguration),
             _ => {
                 Err(SerError::InvalidType(
                     "Found unkown id but expected RaftMsg, Proposal or ProposalResp".into(),
@@ -886,6 +884,60 @@ impl Deserialiser<AtomicBroadcastMsg> for AtomicBroadcastDeser {
         }
     }
 }
+
+#[derive(Clone, Debug)]
+pub enum StopMsg {
+    Peer(u64),
+    Client
+}
+
+const PEER_STOP_ID: u8 = 1;
+const CLIENT_STOP_ID: u8 = 2;
+
+impl Serialisable for StopMsg {
+    fn ser_id(&self) -> u64 { serialiser_ids::STOP_ID }
+
+    fn size_hint(&self) -> Option<usize> {
+        Some(9)
+    }
+
+    fn serialise(&self, buf: &mut dyn BufMut) -> Result<(), SerError> {
+        match self {
+            StopMsg::Peer(pid) => {
+                buf.put_u8(PEER_STOP_ID);
+                buf.put_u64(*pid);
+            },
+            StopMsg::Client => buf.put_u8(CLIENT_STOP_ID),
+        }
+        Ok(())
+    }
+
+    fn local(self: Box<Self>) -> Result<Box<dyn Any + Send>, Box<dyn Serialisable>> {
+        Ok(self)
+    }
+}
+
+pub struct StopMsgDeser;
+
+impl Deserialiser<StopMsg> for StopMsgDeser {
+    const SER_ID: u64 = serialiser_ids::STOP_ID;
+
+    fn deserialise(buf: &mut dyn Buf) -> Result<StopMsg, SerError> {
+        match buf.get_u8() {
+            PEER_STOP_ID => {
+                let pid = buf.get_u64();
+                Ok(StopMsg::Peer(pid))
+            },
+            CLIENT_STOP_ID => Ok(StopMsg::Client),
+            _ => {
+                Err(SerError::InvalidType(
+                    "Found unkown id but expected Peer stop or client stop".into(),
+                ))
+            }
+        }
+    }
+}
+
 
 #[derive(Clone, Debug)]
 pub struct SequenceResp {
