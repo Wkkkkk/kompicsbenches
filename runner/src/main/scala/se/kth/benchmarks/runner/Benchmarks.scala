@@ -319,9 +319,9 @@ object Benchmarks extends ParameterDescriptionImplicits {
   private val atomicBroadcastTestProposals = List(4L.k);
   private val atomicBroadcastTestConcurrentProposals = List(2L.k);
 
-  private val atomicBroadcastNodes = List(3, 5);
-  private val atomicBroadcastProposals = List(10L.mio);
-  private val atomicBroadcastConcurrentProposals = List(1L.k, 10L.k, 100L.k);
+  private val atomicBroadcastNodes = List(3);
+  private val atomicBroadcastProposals = List(100L.k);
+  private val atomicBroadcastConcurrentProposals = List(10L.k, 100L.k);
 
   private val paxos = List("paxos-batch");
 
@@ -432,8 +432,8 @@ object Benchmarks extends ParameterDescriptionImplicits {
     .cross(
       List("paxos-batch"),
       List(3),
-      10L.mio to 20L.mio by 1L.mio,
-      List(100L.k),
+      40L.k to 100L.k by 20L.k,
+      List(10L.k),
       List("off"),
       List("none"),
     );
