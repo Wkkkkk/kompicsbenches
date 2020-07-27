@@ -2,7 +2,7 @@ pub const ELECTION_TIMEOUT: u64 = 10000;
 pub const OUTGOING_MSGS_PERIOD: u64 = 1;
 pub const MAX_INFLIGHT: usize = 10000000;   // capacity of number of messages in parallel. Set to max batch size in experiment test space
 pub const INITIAL_ELECTION_FACTOR: u64 = 10;   // shorter first election: ELECTION_TIMEOUT/INITIAL_ELECTION_FACTOR
-pub const META_RESULTS_DIR: &str = "../meta_results/meta-distributed-aws"; // change for each benchmark
+pub const META_RESULTS_DIR: &str = "../meta_results/meta-distributed-aws-reconfig"; // change for each benchmark
 
 pub mod paxos {
     pub const GET_DECIDED_PERIOD: u64 = 1;
@@ -20,4 +20,7 @@ pub mod raft {
 
 pub mod client {
     pub const PROPOSAL_TIMEOUT: u64 = 50000;
+    // TODO
+    pub const REMOVE_IP: &str = "10.4.145.124";
+    pub const ADD_IP: &str = "10.4.24.75";
 }

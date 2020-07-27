@@ -15,9 +15,9 @@ import $file.benchmarks, benchmarks._
 import $ivy.`com.decodified::scala-ssh:0.9.0`, com.decodified.scalassh.{SSH, HostConfigProvider, PublicKeyLogin}
 //import $ivy.`ch.qos.logback:logback-classic:1.1.7`
 
-val runnerAddr = "127.0.0.1:45678";
+val runnerAddr = "192.168.183.197:45678";
 //val masterAddr = "192.168.0.106:45679";
-val masterAddr = "127.0.0.1:45679";
+val masterAddr = "192.168.183.197:45679";
 
 def getExperimentRunner(prefix: String, results: Path, mode: String = "normal", benchmarks: Seq[String]): BenchmarkRunner = {
 	var params: Seq[Shellable] = Seq(
@@ -313,7 +313,7 @@ private def readNodes(p: Path): List[NodeEntry] = {
 	}
 }
 
-val login = HostConfigProvider.fromLogin(PublicKeyLogin("lkroll", "/Users/lkroll/.ssh/id_rsa"));
+val login = HostConfigProvider.fromLogin(PublicKeyLogin("ubuntu", "/home/ubuntu/.ssh/id_rsa"));
 
 private def startClient(node: NodeEntry, bench: String, runId: String, master: String): Try[Int] = {
 	println(s"Connecting to ${node}...");
