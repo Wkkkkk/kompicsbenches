@@ -376,9 +376,10 @@ impl DistributedBenchmarkMaster for AtomicBroadcastMaster {
             }
             let r = nodes_id.get(&1u64).expect("No node with pid 1 (remove)").address();
             let a = nodes_id.get(&4u64).expect("No node with pid 4 (add)").address();
-            assert_ne!(r, &remove_ip);
-            assert_ne!(a, &add_ip);
+            assert_eq!(r, &remove_ip);
+            assert_eq!(a, &add_ip);
             println!("Remove: {:?}, Add: {:?}", r, a);
+            assert_eq!(normal_nodes.len(), 2);
             for (i, ap) in normal_nodes.into_iter().enumerate() {
                 let pid = i + 2;
                 nodes_id.insert(pid as u64, ap.clone());
@@ -390,8 +391,18 @@ impl DistributedBenchmarkMaster for AtomicBroadcastMaster {
         }
         assert_eq!(nodes_id.len(), num_nodes);
         let leader_election_latch = Arc::new(CountdownEvent::new(1));
+        let nodes = if self.reconfiguration.is_none() {
+            d
+        } else {
+            let mut reordered_nodes = vec![];
+            for i in 1..=num_nodes {
+                reordered_nodes.push(nodes_id.get(&(i as u64)).unwrap().clone());
+            }
+            println!("Nodes: {:?}", reordered_nodes);
+            reordered_nodes
+        };
         let (client_comp, client_path) = self.create_client(nodes_id, self.reconfiguration.clone(), leader_election_latch.clone());
-        let partitioning_actor = self.initialise_iteration(d, client_path);
+        let partitioning_actor = self.initialise_iteration(nodes, client_path);
         partitioning_actor.actor_ref().tell(IterationControlMsg::Run);
         leader_election_latch.wait();   // wait until leader is established
         self.partitioning_actor = Some(partitioning_actor);
