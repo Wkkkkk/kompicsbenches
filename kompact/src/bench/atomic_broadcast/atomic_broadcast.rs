@@ -21,9 +21,10 @@ use tikv_raft::{storage::MemStorage};
 use crate::bench::atomic_broadcast::parameters::META_RESULTS_DIR;
 use std::fs::{create_dir_all, OpenOptions};
 use std::io::Write;
-use crate::bench::atomic_broadcast::parameters::client::PROPOSAL_TIMEOUT;
+use crate::bench::atomic_broadcast::parameters::client::{PROPOSAL_TIMEOUT, REMOVE_IP, ADD_IP};
 use crate::bench::atomic_broadcast::paxos::PaxosReplicaMsg;
 use crate::bench::atomic_broadcast::raft::RaftReplicaMsg;
+use std::net::IpAddr;
 
 const PAXOS_PATH: &'static str = "paxos_replica";
 const RAFT_PATH: &'static str = "raft_replica";
@@ -360,12 +361,48 @@ impl DistributedBenchmarkMaster for AtomicBroadcastMaster {
         self.finished_latch = Some(finished_latch);
         self.iteration_id += 1;
         let mut nodes_id: HashMap<u64, ActorPath> = HashMap::new();
-        for (id, actorpath) in d.iter().enumerate() {
-            nodes_id.insert(id as u64 + 1, actorpath.clone());
+        let num_nodes = d.len();
+        if self.reconfiguration.is_some() {
+            let remove_ip = REMOVE_IP.parse::<IpAddr>().expect("Failed to parse remove IP");
+            let add_ip = ADD_IP.parse::<IpAddr>().expect("Failed to parse add IP");
+            assert_ne!(add_ip, remove_ip);
+            let (reconfig_nodes, normal_nodes): (Vec<&Self::ClientData>, Vec<&Self::ClientData>) = d.iter().partition( |ap| ap.address() == &add_ip || ap.address() == &remove_ip);
+            for ap in reconfig_nodes {
+                if ap.address() == &remove_ip{
+                    nodes_id.insert(1, ap.clone());
+                } else if ap.address() == &add_ip {
+                    nodes_id.insert(4, ap.clone());
+                }
+            }
+            let r = nodes_id.get(&1u64).expect("No node with pid 1 (remove)").address();
+            let a = nodes_id.get(&4u64).expect("No node with pid 4 (add)").address();
+            assert_eq!(r, &remove_ip);
+            assert_eq!(a, &add_ip);
+            println!("Remove: {:?}, Add: {:?}", r, a);
+            assert_eq!(normal_nodes.len(), 2);
+            for (i, ap) in normal_nodes.into_iter().enumerate() {
+                let pid = i + 2;
+                nodes_id.insert(pid as u64, ap.clone());
+            }
+        } else {
+            for (id, actorpath) in d.iter().enumerate() {
+                nodes_id.insert(id as u64 + 1, actorpath.clone());
+            }
         }
+        assert_eq!(nodes_id.len(), num_nodes);
         let leader_election_latch = Arc::new(CountdownEvent::new(1));
+        let nodes = if self.reconfiguration.is_none() {
+            d
+        } else {
+            let mut reordered_nodes = vec![];
+            for i in 1..=num_nodes {
+                reordered_nodes.push(nodes_id.get(&(i as u64)).unwrap().clone());
+            }
+            println!("Nodes: {:?}", reordered_nodes);
+            reordered_nodes
+        };
         let (client_comp, client_path) = self.create_client(nodes_id, self.reconfiguration.clone(), leader_election_latch.clone());
-        let partitioning_actor = self.initialise_iteration(d, client_path);
+        let partitioning_actor = self.initialise_iteration(nodes, client_path);
         partitioning_actor.actor_ref().tell(IterationControlMsg::Run);
         leader_election_latch.wait();   // wait until leader is established
         self.partitioning_actor = Some(partitioning_actor);

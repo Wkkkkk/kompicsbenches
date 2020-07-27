@@ -558,59 +558,14 @@ impl<S> RaftComp<S> where S: RaftStorage + Send + Clone + 'static {
             return;
         }
         match proposal.reconfig {
-            Some(mut reconfig) => {
+            Some(reconfig) => {
                 if let ReconfigurationState::None = self.reconfig_state {
                     let leader_pid = self.raw_raft.raft.leader_id;
                     if leader_pid != self.raw_raft.raft.id {
                         self.supervisor.tell(RaftReplicaMsg::ForwardReconfig(leader_pid, reconfig));
                         return;
                     }
-                    let mut current_config = self.raw_raft.raft.prs().configuration().voters().clone();
-                    match self.reconfig_policy {
-                        ReconfigurationPolicy::JointConsensusRemoveLeader => {
-                            let mut add_nodes: Vec<u64> = reconfig.0.drain(..).filter(|pid| !current_config.contains(pid)).collect();
-                            current_config.remove(&leader_pid);
-                            let mut new_voters = current_config.into_iter().collect::<Vec<u64>>();
-                            new_voters.append(&mut add_nodes);
-                            let new_config = (new_voters, vec![]);
-                            // info!(self.ctx.log(), "Joint consensus remove leader: my pid: {}, reconfig: {:?}", leader_pid, new_config);
-                            self.raw_raft.raft.propose_membership_change(new_config).expect("Failed to propose joint consensus reconfiguration (remove leader)");
-                        },
-                        ReconfigurationPolicy::JointConsensusRemoveFollower => {
-                            if !reconfig.0.contains(&leader_pid) {
-                                let my_pid = self.raw_raft.raft.id;
-                                let mut add_nodes: Vec<u64> = reconfig.0.drain(..).filter(|pid| !current_config.contains(pid)).collect();
-                                let follower_pid: u64 = **(current_config.iter().filter(|pid| *pid != &my_pid).collect::<Vec<&u64>>().first().expect("No followers found"));
-                                current_config.remove(&follower_pid);
-                                let mut new_voters = current_config.into_iter().collect::<Vec<u64>>();
-                                new_voters.append(&mut add_nodes);
-                                let new_config = (new_voters, vec![]);
-                                // info!(self.ctx.log(), "Joint consensus remove follower: my pid: {}, reconfig: {:?}", leader_pid, new_config);
-                                self.raw_raft.raft.propose_membership_change(new_config).expect("Failed to propose joint consensus reconfiguration");
-                            } else {
-                                self.raw_raft.raft.propose_membership_change(reconfig).expect("Failed to propose joint consensus reconfiguration (remove follower)");
-                            }
-                        },
-                        _ => {
-                            unreachable!("Should not use Add-Remove node reconfig in experiments!");
-                            /*
-                            let current_config = self.raw_raft.raft.prs().configuration().voters();
-                            let num_remove_nodes = current_config.iter().filter(|pid| !reconfig.0.contains(pid)).count();
-                            let mut add_nodes: Vec<u64> = reconfig.0.drain(..).filter(|pid| !current_config.contains(pid)).collect();
-                            // let (mut add_nodes, mut remove_nodes): (Vec<u64>, Vec<u64>) = reconfig.0.drain(..).partition(|pid| !current_config.contains(pid));
-                            let pid = add_nodes.pop().expect("No new node to add?");
-                            // info!(self.ctx.log(), "Proposing AddNode {}", pid);
-                            let next_change = if num_remove_nodes > 0 {
-                                Some(ConfChangeType::RemoveNode)
-                            } else if !add_nodes.is_empty() {
-                                Some(ConfChangeType::AddNode)
-                            } else {
-                                None
-                            };
-                            self.propose_conf_change(pid, ConfChangeType::AddNode, next_change);
-                            */
-                        }
-                    }
+                    self.raw_raft.raft.propose_membership_change(reconfig).expect("Failed to propose joint consensus reconfiguration (remove leader)");
                     self.reconfig_state = ReconfigurationState::Pending;
                 }
             }
