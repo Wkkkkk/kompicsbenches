@@ -23,4 +23,5 @@ pub mod client {
     // TODO
     pub const REMOVE_IP: &str = "10.4.145.124";
     pub const ADD_IP: &str = "10.4.24.75";
+    pub const LEADER_IP: &str = "10.0.24.188";
 }

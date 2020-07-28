@@ -21,7 +21,7 @@ use tikv_raft::{storage::MemStorage};
 use crate::bench::atomic_broadcast::parameters::META_RESULTS_DIR;
 use std::fs::{create_dir_all, OpenOptions};
 use std::io::Write;
-use crate::bench::atomic_broadcast::parameters::client::{PROPOSAL_TIMEOUT, REMOVE_IP, ADD_IP};
+use crate::bench::atomic_broadcast::parameters::client::{PROPOSAL_TIMEOUT, REMOVE_IP, ADD_IP, LEADER_IP};
 use crate::bench::atomic_broadcast::paxos::PaxosReplicaMsg;
 use crate::bench::atomic_broadcast::raft::RaftReplicaMsg;
 use std::net::IpAddr;
@@ -385,21 +385,23 @@ impl DistributedBenchmarkMaster for AtomicBroadcastMaster {
                 nodes_id.insert(pid as u64, ap.clone());
             }
         } else {
-            for (id, actorpath) in d.iter().enumerate() {
-                nodes_id.insert(id as u64 + 1, actorpath.clone());
+            let leader_ip = LEADER_IP.parse::<IpAddr>().expect("Failed to parse leader IP");
+            let (l, followers): (Vec<&Self::ClientData>, Vec<&Self::ClientData>) = d.iter().partition(|ap| ap.address() == &leader_ip);
+            assert_eq!(l.len(), 1);
+            let leader = l[0];
+            for (id, actorpath) in followers.iter().enumerate() {
+                println!("Follower {}: {:?}", id + 1, actorpath);
+                nodes_id.insert(id as u64 + 1, (*actorpath).clone());
             }
+            let leader_id = num_nodes;
+            println!("Leader {}: {:?}", leader_id, leader);
+            nodes_id.insert(followers.len() as u64 + 1, (*leader).clone());
         }
         assert_eq!(nodes_id.len(), num_nodes);
         let leader_election_latch = Arc::new(CountdownEvent::new(1));
-        let nodes = if self.reconfiguration.is_none() {
-            d
-        } else {
-            let mut reordered_nodes = vec![];
-            for i in 1..=num_nodes {
-                reordered_nodes.push(nodes_id.get(&(i as u64)).unwrap().clone());
-            }
-            println!("Nodes: {:?}", reordered_nodes);
-            reordered_nodes
+        let mut nodes = vec![];
+        for i in 1..=num_nodes {
+            nodes.push(nodes_id.get(&(i as u64)).unwrap().clone());
         };
         let (client_comp, client_path) = self.create_client(nodes_id, self.reconfiguration.clone(), leader_election_latch.clone());
         let partitioning_actor = self.initialise_iteration(nodes, client_path);

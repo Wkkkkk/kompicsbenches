@@ -432,7 +432,7 @@ object Benchmarks extends ParameterDescriptionImplicits {
     invoke = (stub, request: AtomicBroadcastRequest) => {
       stub.atomicBroadcast(request)
     },
-    space = paxosReconfigSpace.append(raftReconfigSpace)
+    space = paxosNormalSpace.append(raftNormalSpace)
       .msg[AtomicBroadcastRequest] {
         case (a, nn, np, cp, r, rp) =>
           AtomicBroadcastRequest(
