@@ -385,6 +385,10 @@ impl DistributedBenchmarkMaster for AtomicBroadcastMaster {
                 nodes_id.insert(pid as u64, ap.clone());
             }
         } else {
+            for (id, actorpath) in d.iter().enumerate() {
+                nodes_id.insert(id as u64 + 1, actorpath.clone());
+            }
+            /*
             let leader_ip = LEADER_IP.parse::<IpAddr>().expect("Failed to parse leader IP");
             let (l, followers): (Vec<&Self::ClientData>, Vec<&Self::ClientData>) = d.iter().partition(|ap| ap.address() == &leader_ip);
             assert_eq!(l.len(), 1);
@@ -396,6 +400,7 @@ impl DistributedBenchmarkMaster for AtomicBroadcastMaster {
             let leader_id = num_nodes;
             println!("Leader {}: {:?}", leader_id, leader);
             nodes_id.insert(followers.len() as u64 + 1, (*leader).clone());
+            */
         }
         assert_eq!(nodes_id.len(), num_nodes);
         let leader_election_latch = Arc::new(CountdownEvent::new(1));
