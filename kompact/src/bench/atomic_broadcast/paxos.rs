@@ -17,6 +17,7 @@ use super::communicator::{CommunicationPort, AtomicBroadcastCompMsg, Communicato
 use super::parameters::{*, paxos::*};
 use crate::serialiser_ids::ATOMICBCAST_ID;
 use hashbrown::{HashMap, HashSet};
+use crate::bench::atomic_broadcast::parameters::max_accsync_experiments::{EXPERIMENT_MODE, Mode, NUM_ELEMENTS, SLOW_LD};
 
 const BLE: &str = "ble";
 const COMMUNICATOR: &str = "communicator";
@@ -822,8 +823,16 @@ impl<S, P> PaxosComp<S, P> where
         batch_accept: bool
     ) -> PaxosComp<S, P>
     {
-        let seq = S::new();
-        let paxos_state = P::new();
+        let initial_seq = vec![Entry::Normal(vec![0; 8]); NUM_ELEMENTS];
+        let seq = S::new_with_sequence(initial_seq);
+        let mut paxos_state = P::new();
+        let ld = match EXPERIMENT_MODE {
+            Mode::All => NUM_ELEMENTS as u64,
+            Mode::Majority => { if pid == 1 { SLOW_LD } else { NUM_ELEMENTS as u64 } },
+            Mode::Leader => if pid == 3 { NUM_ELEMENTS as u64 } else { SLOW_LD },
+            _ => NUM_ELEMENTS as u64/2
+        };
+        paxos_state.set_decided_len(ld);
         let storage = Storage::with(seq, paxos_state);
         let paxos = Paxos::with(config_id, pid, peers.clone(), storage, batch_accept);
         PaxosComp {
@@ -1029,6 +1038,8 @@ pub mod raw_paxos{
     use std::sync::Arc;
     use crate::bench::atomic_broadcast::parameters::MAX_INFLIGHT;
     use crate::bench::atomic_broadcast::parameters::paxos::BATCH_DECIDE;
+    use crate::bench::atomic_broadcast::parameters::max_accsync_experiments::*;
+    use std::time::SystemTime;
 
     pub struct Paxos<S, P> where
         S: SequenceTraits,
@@ -1057,6 +1068,8 @@ pub mod raw_paxos{
         outgoing: Vec<Message>,
         num_nodes: usize,
         cached_la: u64,
+        // max accsync experiment
+        prepare_start: Option<SystemTime>
     }
 
     impl<S, P> Paxos<S, P> where
@@ -1077,6 +1090,7 @@ pub mod raw_paxos{
             let max_peer_pid = peers.iter().max().unwrap();
             let max_pid = std::cmp::max(max_peer_pid, &pid);
             let num_nodes = *max_pid as usize;
+            let cached_la = storage.get_sequence_len() as u64;
             Paxos {
                 storage,
                 pid,
@@ -1089,7 +1103,7 @@ pub mod raw_paxos{
                 promises_meta: vec![None; num_nodes],
                 las: vec![0; num_nodes],
                 lds: vec![None; num_nodes],
-                proposals: Vec::with_capacity(MAX_INFLIGHT),
+                proposals: vec![Entry::Normal(vec![0; 8]); NUM_PROPOSALS],
                 lc: 0,
                 prev_ld: 0,
                 acc_sync_ld: 0,
@@ -1100,7 +1114,8 @@ pub mod raw_paxos{
                 batch_decide_meta: vec![None; num_nodes],
                 outgoing: Vec::with_capacity(MAX_INFLIGHT),
                 num_nodes,
-                cached_la: 0,
+                cached_la,
+                prepare_start: None,
             }
         }
 
@@ -1217,6 +1232,7 @@ pub mod raw_paxos{
                 self.proposals.clear();
             }
             if self.pid == l.pid {
+                self.prepare_start = Some(SystemTime::now());
                 self.n_leader = n;
                 self.leader = n.pid;
                 self.storage.set_promise(n);
@@ -1315,7 +1331,8 @@ pub mod raw_paxos{
             if prom.n == self.n_leader {
                 let sfx_len = prom.sfx.len();
                 let promise_meta = &(prom.n_accepted, sfx_len, from);
-                if promise_meta > &self.max_promise_meta {
+                if promise_meta > &self.max_promise_meta && prom.ld == self.acc_sync_ld {
+                    // println!("Got higher promise: {:?}, old: {:?}", promise_meta, self.max_promise_meta);
                     self.max_promise_meta = promise_meta.clone();
                     self.max_promise_sfx = prom.sfx;
                 }
@@ -1356,7 +1373,7 @@ pub mod raw_paxos{
                         let pid = idx as u64 + 1;
                         let ld = l.unwrap();
                         let promise_meta = &self.promises_meta[idx].expect(&format!("No promise from {}. Max pid: {}", pid, max_pid));
-                        if promise_meta == &(max_promise_n, max_sfx_len) {
+                        if promise_meta == &(max_promise_n, max_sfx_len) && ld == max_ld && EXPERIMENT_MODE != Mode::Off {
                             let msg = Message::with(self.pid, pid, PaxosMsg::AcceptSync(max_promise_acc_sync.clone()));
                             self.outgoing.push(msg);
                         } else {
@@ -1385,8 +1402,17 @@ pub mod raw_paxos{
             if prom.n == self.n_leader {
                 let idx = from as usize - 1;
                 self.lds[idx] = Some(prom.ld);
-                let sfx = self.storage.get_suffix(prom.ld);
-                let acc_sync = AcceptSync::with(self.n_leader, sfx, prom.ld, true);
+                let sfx_len = prom.sfx.len();
+                let promise_meta = &(prom.n_accepted, sfx_len);
+                let (max_ballot, max_sfx_len, _) = self.max_promise_meta;
+                let (sync, sfx_start) = if promise_meta == &(max_ballot, max_sfx_len) {
+                    (false, prom.ld + sfx_len as u64)
+                } else {
+                    (true, prom.ld)
+                };
+                let sfx = self.storage.get_suffix(sfx_start);
+                // println!("Handle promise from {} in Accept phase: {:?}, sfx len: {}", from, (sync, sfx_start), sfx.len());
+                let acc_sync = AcceptSync::with(self.n_leader, sfx, prom.ld, sync);
                 self.outgoing.push(Message::with(self.pid, from, PaxosMsg::AcceptSync(acc_sync)));
                 // inform what got decided already
                 let ld = if self.lc > 0 {
@@ -1407,6 +1433,10 @@ pub mod raw_paxos{
                 if accepted.la > self.lc {
                     let chosen = self.las.iter().filter(|la| *la >= &accepted.la).count() >= self.majority;
                     if chosen {
+                        if let Some(start) = self.prepare_start.take() {
+                            let dur = start.elapsed().unwrap().as_nanos() as f64 / 1000f64;
+                            println!("Max AcceptSync result: Mode: {:?}, num_elements: {}, num_proposals: {}, ld: {}: {}", EXPERIMENT_MODE, NUM_ELEMENTS, NUM_PROPOSALS, SLOW_LD, dur);
+                        }
                         self.lc = accepted.la;
                         if BATCH_DECIDE {
                             let promised_idx = self.lds.iter().enumerate().filter(|(_, ld)| ld.is_some());

@@ -592,6 +592,8 @@ pub mod paxos {
     pub trait PaxosState {
         fn new() -> Self;
 
+        fn with(n_prom: Ballot, acc: Ballot, ld: u64) -> Self;
+
         fn set_promise(&mut self, nprom: Ballot);
 
         fn set_decided_len(&mut self, ld: u64);
@@ -855,6 +857,10 @@ pub mod paxos {
         fn new() -> Self {
             let ballot = Ballot::with(0, 0);
             MemoryState{ n_prom: ballot, acc_round: ballot, ld: 0 }
+        }
+
+        fn with(n_prom: Ballot, acc_round: Ballot, ld: u64) -> Self {
+            MemoryState{ n_prom, acc_round, ld }
         }
 
         fn set_promise(&mut self, nprom: Ballot) {

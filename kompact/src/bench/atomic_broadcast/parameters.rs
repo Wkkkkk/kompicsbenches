@@ -21,3 +21,18 @@ pub mod raft {
 pub mod client {
     pub const PROPOSAL_TIMEOUT: u64 = 50000;
 }
+
+pub mod max_accsync_experiments {
+    #[derive(Debug, Eq, PartialEq)]
+    pub enum Mode {
+        All,
+        Majority,
+        Leader,
+        On,
+        Off
+    }
+    pub const EXPERIMENT_MODE: Mode = Mode::On;
+    pub const NUM_ELEMENTS: usize = 1000;
+    pub const NUM_PROPOSALS: usize = 100;
+    pub const SLOW_LD: u64 = (NUM_ELEMENTS/2) as u64;
+}

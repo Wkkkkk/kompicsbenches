@@ -284,6 +284,10 @@ impl Actor for Client {
                     },
                     AtomicBroadcastMsg::ProposalResp(pr) => {
                         if self.state == ExperimentState::Finished || self.state == ExperimentState::LeaderElection { return; }
+                        // finish directly in max accsync experiments
+                        self.state = ExperimentState::Finished;
+                        self.finished_latch.decrement().expect("Failed to countdown finished latch");
+                        /*
                         let data = pr.data;
                         let response = Self::deserialise_response(&mut data.as_slice());
                         match response {
@@ -327,6 +331,7 @@ impl Actor for Client {
                                 }
                             }
                         }
+                         */
                     },
                     AtomicBroadcastMsg::PendingReconfiguration => {
                         // info!(self.ctx.log(), "Got PendingReconfiguration");
