@@ -384,8 +384,8 @@ impl DistributedBenchmarkMaster for AtomicBroadcastMaster {
         }
     }
 
-    fn cleanup_iteration(&mut self, last_iteration: bool, _exec_time_millis: f64) -> () {
-        println!("Cleaning up Atomic Broadcast (master) side");
+    fn cleanup_iteration(&mut self, last_iteration: bool, exec_time_millis: f64) -> () {
+        println!("Cleaning up Atomic Broadcast. Exec_time: {}", exec_time_millis);
         let system = self.system.take().unwrap();
         let client = self.client_comp.take().unwrap();
         client.actor_ref().tell(LocalClientMessage::Stop);
