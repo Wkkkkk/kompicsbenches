@@ -843,7 +843,7 @@ pub mod raw_paxos{
         acc_sync_ld: u64,
         max_promise_meta: (Ballot, usize, u64),  // ballot, sfx len, pid
         max_promise_sfx: Vec<Entry>,
-        la: u64,
+        cached_la: u64,
         num_nodes: usize,
         stopped: bool,
         stopped_peers: HashSet<u64>
@@ -870,6 +870,7 @@ pub mod raw_paxos{
             let max_peer_pid = peers.iter().max().unwrap();
             let max_pid = std::cmp::max(max_peer_pid, &pid);
             let num_nodes = *max_pid as usize;
+            let cached_la = storage.get_sequence_len() as u64;
             Paxos {
                 ctx: ComponentContext::new(),
                 supervisor,
@@ -892,7 +893,7 @@ pub mod raw_paxos{
                 acc_sync_ld: 0,
                 max_promise_meta: (Ballot::with(0, 0), 0, 0),
                 max_promise_sfx: vec![],
-                la: 0,
+                cached_la,
                 num_nodes,
                 stopped: false,
                 stopped_peers: HashSet::with_capacity(num_nodes)
@@ -1045,8 +1046,8 @@ pub mod raw_paxos{
                     self.communication_port.trigger(CommunicatorMsg::RawPaxosMsg(msg));
                 }
                 self.storage.append_entry(entry);
-                self.la += 1;
-                self.las[self.pid as usize - 1] = self.la;
+                self.cached_la += 1;
+                self.las[self.pid as usize - 1] = self.cached_la;
             }
         }
 
@@ -1054,7 +1055,7 @@ pub mod raw_paxos{
             if prom.n == self.n_leader {
                 let sfx_len = prom.sfx.len();
                 let promise_meta = &(prom.n_accepted, sfx_len, from);
-                if promise_meta > &self.max_promise_meta {
+                if promise_meta > &self.max_promise_meta && prom.ld == self.acc_sync_ld {
                     self.max_promise_meta = promise_meta.clone();
                     self.max_promise_sfx = prom.sfx;
                 }
@@ -1085,20 +1086,20 @@ pub mod raw_paxos{
                     let max_promise_acc_sync = AcceptSync::with(self.n_leader, new_entries.clone(), max_ld, false);
                     // append new proposals in my sequence
                     self.storage.append_sequence(&mut new_entries);
-                    self.la = self.storage.get_sequence_len();
-                    self.las[self.pid as usize - 1] = self.la;
+                    self.cached_la = self.storage.get_sequence_len();
+                    self.las[self.pid as usize - 1] = self.cached_la;
                     self.state = (Role::Leader, Phase::Accept);
                     // send accept_sync to followers
                     let max_idx = max_pid as usize - 1;
                     let promised = self.lds.iter().enumerate().filter(|(idx, ld)| idx != &max_idx && ld.is_some());
                     for (idx, l) in promised {
                         let pid = idx as u64 + 1;
+                        let ld = l.unwrap();
                         let promise_meta = &self.promises_meta[idx].expect(&format!("No promise from {}. Max pid: {}", pid, max_pid));
-                        if promise_meta == &(max_promise_n, max_sfx_len) {
+                        if promise_meta == &(max_promise_n, max_sfx_len) && ld == max_ld {
                             let msg = Message::with(self.pid, pid, PaxosMsg::AcceptSync(max_promise_acc_sync.clone()));
                             self.communication_port.trigger(CommunicatorMsg::RawPaxosMsg(msg));
                         } else {
-                            let ld = l.unwrap();
                             let sfx = self.storage.get_suffix(ld);
                             let acc_sync = AcceptSync::with(self.n_leader, sfx, ld, true);
                             let msg = Message::with(self.pid, pid, PaxosMsg::AcceptSync(acc_sync));
@@ -1118,15 +1119,24 @@ pub mod raw_paxos{
             if prom.n == self.n_leader {
                 let idx = from as usize - 1;
                 self.lds[idx] = Some(prom.ld);
-                let sfx = self.storage.get_suffix(prom.ld);
-                let acc_sync = AcceptSync::with(self.n_leader, sfx, prom.ld, true);
+                let sfx_len = prom.sfx.len();
+                let promise_meta = &(prom.n_accepted, sfx_len);
+                let (max_ballot, max_sfx_len, _) = self.max_promise_meta;
+                let (sync, sfx_start) = if promise_meta == &(max_ballot, max_sfx_len) {
+                    (false, prom.ld + sfx_len as u64)
+                } else {
+                    (true, prom.ld)
+                };
+                let sfx = self.storage.get_suffix(sfx_start);
+                // println!("Handle promise from {} in Accept phase: {:?}, sfx len: {}", from, (sync, sfx_start), sfx.len());
+                let acc_sync = AcceptSync::with(self.n_leader, sfx, prom.ld, sync);
                 let msg = Message::with(self.pid, from, PaxosMsg::AcceptSync(acc_sync));
                 self.communication_port.trigger(CommunicatorMsg::RawPaxosMsg(msg));
                 // inform what got decided already
                 let idx = if self.lc > 0 {
                     self.lc
                 } else {
-                    self.la
+                    self.cached_la
                 };
                 if idx > prom.ld {
                     let d = Decide::with(idx, self.n_leader);
@@ -1180,13 +1190,13 @@ pub mod raw_paxos{
                     let mut entries = acc_sync.entries;
                     if acc_sync.sync {
                         self.storage.append_on_prefix(acc_sync.ld, &mut entries);
-                        self.la = self.storage.get_sequence_len();
+                        self.cached_la = self.storage.get_sequence_len();
                     } else {
                         self.storage.append_sequence(&mut entries);
-                        self.la += entries.len() as u64;
+                        self.cached_la += entries.len() as u64;
                     }
                     self.state = (Role::Follower, Phase::Accept);
-                    let accepted = Accepted::with(acc_sync.n, self.la);
+                    let accepted = Accepted::with(acc_sync.n, self.cached_la);
                     let msg = Message::with(self.pid, from, PaxosMsg::Accepted(accepted));
                     self.communication_port.trigger(CommunicatorMsg::RawPaxosMsg(msg));
                 }
