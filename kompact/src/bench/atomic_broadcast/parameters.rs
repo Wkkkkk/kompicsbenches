@@ -10,6 +10,7 @@ pub mod paxos {
     pub const BLE_DELTA: u64 = 100;
     pub const BATCH_DECIDE: bool = true;
     pub const BLE_PRIO_START: bool = true;
+    pub const MAX_ACCSYNC: bool = true;
 }
 
 pub mod raft {
@@ -28,11 +29,9 @@ pub mod max_accsync_experiments {
         All,
         Majority,
         Leader,
-        On,
-        Off
     }
-    pub const EXPERIMENT_MODE: Mode = Mode::On;
-    pub const NUM_ELEMENTS: usize = 1000;
-    pub const NUM_PROPOSALS: usize = 100;
+    pub const EXPERIMENT_MODE: Mode = Mode::Majority;
+    pub const NUM_ELEMENTS: usize = 20000000;
+    pub const NUM_PROPOSALS: usize = 1000000;
     pub const SLOW_LD: u64 = (NUM_ELEMENTS/2) as u64;
 }
