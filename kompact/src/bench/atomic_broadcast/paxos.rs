@@ -1136,7 +1136,7 @@ pub mod raw_paxos{
                 let idx = if self.lc > 0 {
                     self.lc
                 } else {
-                    self.cached_la
+                    self.storage.get_decided_len()
                 };
                 if idx > prom.ld {
                     let d = Decide::with(idx, self.n_leader);
@@ -1207,7 +1207,8 @@ pub mod raw_paxos{
             if self.state == (Role::Follower, Phase::Accept) {
                 if self.storage.get_promise() == acc.n {
                     self.storage.append_entry(acc.entry);
-                    let accepted = Accepted::with(acc.n, self.storage.get_sequence_len());
+                    self.cached_la += 1;
+                    let accepted = Accepted::with(acc.n, self.cached_la);
                     let msg = Message::with(self.pid, from, PaxosMsg::Accepted(accepted));
                     self.communication_port.trigger(CommunicatorMsg::RawPaxosMsg(msg));
                 }
