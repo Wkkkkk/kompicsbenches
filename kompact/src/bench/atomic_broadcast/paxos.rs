@@ -1456,8 +1456,8 @@ pub mod raw_paxos{
                     let chosen = self.las.iter().filter(|la| *la >= &accepted.la).count() >= self.majority;
                     if chosen {
                         if let Some(start) = self.prepare_start.take() {
-                            let dur = start.elapsed().unwrap().as_nanos() as f64 / 1000f64;
-                            println!("Max AcceptSync result: Mode: {:?}, num_nodes: {}, num_elements: {}, num_proposals: {}, ld: {}: {}", EXPERIMENT_MODE, self.peers.len() + 1,NUM_ELEMENTS, NUM_PROPOSALS, SLOW_LD, dur);
+                            let dur = start.elapsed().unwrap().as_micros() as f64 / 1000f64;
+                            println!("Max AcceptSync result: Mode: {:?}-{}, num_nodes: {}, num_elements: {}, num_proposals: {}, ld: {}: {}", EXPERIMENT_MODE, MAX_ACCSYNC, self.peers.len() + 1,NUM_ELEMENTS, NUM_PROPOSALS, SLOW_LD, dur);
                         }
                         self.lc = accepted.la;
                         if BATCH_DECIDE {
