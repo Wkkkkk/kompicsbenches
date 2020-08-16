@@ -139,7 +139,7 @@ impl Client {
         if received_count == self.num_proposals && self.reconfig.is_none() {
             self.state = ExperimentState::Finished;
             self.finished_latch.decrement().expect("Failed to countdown finished latch");
-            info!(self.ctx.log(), "Got all responses. {} proposals timed out.", self.num_timed_out);
+            info!(self.ctx.log(), "Got all responses. {} proposals timed out. Last leader was: {}", self.num_timed_out, self.current_leader);
         } else if received_count == self.num_proposals/2 && self.reconfig.is_some() {
             if let Some(leader) = self.nodes.get(&self.current_leader) {
                 self.propose_reconfiguration(&leader);
@@ -151,7 +151,7 @@ impl Client {
     }
 
     fn proposal_timeout(&mut self, id: u64) {
-        if self.responses.contains_key(&id) { return; }
+        if self.responses.contains_key(&id) || self.state == ExperimentState::ReconfigurationElection { return; }
         // info!(self.ctx.log(), "Timed out proposal {}", id);
         if id == RECONFIG_ID {
             if let Some(leader) = self.nodes.get(&self.current_leader) {
@@ -173,9 +173,7 @@ impl Client {
                 _ => None,
             };
             self.handle_normal_response(id, latency);
-            if self.state != ExperimentState::ReconfigurationElection {
-                self.send_concurrent_proposals();
-            }
+            self.send_concurrent_proposals();
         }
     }
 
