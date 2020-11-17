@@ -59,8 +59,6 @@ case class BenchmarkWithSpace[Params](b: BenchmarkRun[Params],
       case BenchMode.CONVERGE => convergeSpace.get
     }
     var cached_conv_value = 0L;
-    var converge_count: Int = 0;
-    val converge_goal: Int = 5; // number of consecutive runs to be considered converged
     useSpace.foreach { p =>
       index += 1L;
       val res = run(stub, p);
@@ -73,17 +71,7 @@ case class BenchmarkWithSpace[Params](b: BenchmarkRun[Params],
                 val stats = new Statistics(data);
                 val mean = stats.sampleMean;
                 val calculated_conv_value = convergeFunction.get.apply(p, mean.toLong);
-                if (cached_conv_value == 0) {
-                  cached_conv_value = calculated_conv_value;
-                }
-                val converge_ratio: Float = calculated_conv_value.toFloat/cached_conv_value.toFloat;
-                println(s"Converge ratio: $converge_ratio, run took: ${mean.toLong/60000L} minutes");
-                if (converge_ratio <= 1.05) {
-                  converge_count += 1;
-                } else {
-                  converge_count = 0;
-                }
-                val converged = if (converge_count == converge_goal) {
+                val converged = if (calculated_conv_value <= cached_conv_value) {
                   Some(TestConverged(cached_conv_value, calculated_conv_value))
                 } else {
                   None
@@ -316,17 +304,17 @@ object Benchmarks extends ParameterDescriptionImplicits {
 
   /*** split into different parameter spaces as some parameters are dependent on each other ***/
   private val atomicBroadcastTestNodes = List(3);
-  private val atomicBroadcastTestProposals = List(1L.k);
-  private val atomicBroadcastTestConcurrentProposals = List(500L);
+  private val atomicBroadcastTestProposals = List(10L.mio);
+  private val atomicBroadcastTestConcurrentProposals = List(10L.k, 100L.k, 1L.mio);
 
-  private val atomicBroadcastNodes = List(3);
-  private val atomicBroadcastProposals = List(10L.mio);
+  private val atomicBroadcastNodes = List(3, 5);
+  private val atomicBroadcastProposals = List(20L.mio);
   private val atomicBroadcastConcurrentProposals = List(10L.k, 100L.k, 1L.mio);
 
   private val paxos = List("paxos-batch");
 
   private val raft = List("raft-batch");
-  private val raft_reconfig = List("none");
+  private val raft_reconfig = List("replace-follower", "replace-leader");
 
   private val paxos_reconfig = List("pull");
 
@@ -432,8 +420,8 @@ object Benchmarks extends ParameterDescriptionImplicits {
     .cross(
       List("raft-batch"),
       List(3),
-      1L.mio to 5L.mio,
-      List(10L.k),
+      5L.mio to 15L.mio by 1L.mio,
+      List(1L.k),
       List("off"),
       List("none"),
     );
@@ -444,7 +432,7 @@ object Benchmarks extends ParameterDescriptionImplicits {
     invoke = (stub, request: AtomicBroadcastRequest) => {
       stub.atomicBroadcast(request)
     },
-    space = paxosReconfigSpace.append(raftReconfigSpace)
+    space = paxosSpace.append(raftSpace).append(latencySpace)
       .msg[AtomicBroadcastRequest] {
         case (a, nn, np, cp, r, rp) =>
           AtomicBroadcastRequest(
@@ -456,7 +444,7 @@ object Benchmarks extends ParameterDescriptionImplicits {
             reconfigPolicy = rp,
           )
       },
-    testSpace = paxosReconfigTestSpace
+    testSpace = paxosTestSpace.append(raftTestSpace)
       .msg[AtomicBroadcastRequest] {
         case (a, nn, np, cp, r, rp) =>
           AtomicBroadcastRequest(

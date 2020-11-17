@@ -1,6 +1,7 @@
 //use super::*;
 
 use kompact::executors::*;
+use kompact::net::buffers::BufferConfig;
 use kompact::prelude::*;
 use num_cpus;
 use std::net::{IpAddr, Ipv4Addr, SocketAddr};
@@ -59,7 +60,11 @@ impl KompactSystemProvider {
         self.new_remote_system_with_threads(name, self.get_num_workers())
     }
 
-    pub fn new_remote_system_with_threads<I: Into<String>>(&self, name: I, threads: usize) -> KompactSystem {
+    pub fn new_remote_system_with_threads<I: Into<String>>(
+        &self,
+        name: I,
+        threads: usize,
+    ) -> KompactSystem {
         let s = name.into();
         let addr = SocketAddr::new(self.get_public_if(), 0);
         let mut conf = KompactConfig::default();
@@ -68,6 +73,27 @@ impl KompactSystemProvider {
         Self::set_executor_for_threads(threads, &mut conf);
         conf.throughput(50);
         conf.system_components(DeadletterBox::new, NetworkConfig::new(addr).build());
+        let system = conf.build().expect("KompactSystem");
+        system
+    }
+
+    pub fn new_remote_system_with_threads_config<I: Into<String>>(
+        &self,
+        name: I,
+        threads: usize,
+        mut conf: KompactConfig,
+        buf_conf: BufferConfig,
+        tcp_no_delay: bool,
+    ) -> KompactSystem {
+        let s = name.into();
+        let addr = SocketAddr::new(self.get_public_if(), 0);
+        conf.label(s);
+        conf.threads(threads);
+        Self::set_executor_for_threads(threads, &mut conf);
+        conf.throughput(50);
+        let mut nc = NetworkConfig::with_buffer_config(addr, buf_conf);
+        nc.set_tcp_nodelay(tcp_no_delay);
+        conf.system_components(DeadletterBox::new, nc.build());
         let system = conf.build().expect("KompactSystem");
         system
     }

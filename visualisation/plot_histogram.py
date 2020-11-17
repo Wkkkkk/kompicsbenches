@@ -1,4 +1,5 @@
 # uncomment for use on WSL  
+
 import matplotlib
 matplotlib.use('Agg')
 
@@ -23,31 +24,29 @@ n = int(args.n)
 data_files = [f for f in os.listdir(args.s) if f.endswith('.data')]
 for filename in data_files :
     count = 0
-    x = []
-    y = []
+    data = []
     print("Reading", filename, "...")
     for line in open(args.s + filename, 'r'):
         count += 1
         #print(line)
-        x.append(count)
-        y.append(float(line)/1000)
+        data.append(float(line))
         if count == n:
             break
-    all_plots.append((x, y))
+    all_plots.append(data)
     if "paxos" in filename:
-    	legends.append("paxos")
+        legends.append("paxos")
     else:
-    	legends.append("raft")
-    #legends.append(filename)
+        legends.append("raft")
     
-print("Plotting",len(all_plots),"series")    
-for (x, y) in all_plots:
-    plt.scatter(x, y, alpha = 0.4)
+print("Plotting",len(all_plots),"series")
+kwargs = dict(alpha=0.75, bins=100, log=True)
+
+for data in all_plots:
+    plt.hist(data, **kwargs)
         
 plt.title('Latency')
-plt.xlabel('Proposal id')
-plt.ylabel('Latency (ms)')
-plt.yscale('linear')
+#plt.xlabel('Proposal id')
+plt.xlabel('Latency (micro s)')
 plt.legend(legends, loc='upper right')
-plt.savefig(args.t + 'latency.png', dpi = 600)
+plt.savefig(args.t + 'histogram.png', dpi = 600)
 plt.show()

@@ -2,17 +2,17 @@ use super::*;
 
 use crate::partitioning_actor::*;
 use benchmark_suite_shared::kompics_benchmarks::benchmarks::AtomicRegisterRequest;
+use benchmark_suite_shared::test_utils::all_linearizable;
+use benchmark_suite_shared::test_utils::KVOperation;
+use benchmark_suite_shared::test_utils::KVTimestamp;
+use chrono::Utc;
 use kompact::prelude::*;
 use partitioning_actor::PartitioningActor;
+use rand::Rng;
 use std::collections::HashMap;
 use std::str::FromStr;
 use std::sync::Arc;
-use chrono::Utc;
 use synchronoise::CountdownEvent;
-use benchmark_suite_shared::test_utils::KVTimestamp;
-use benchmark_suite_shared::test_utils::KVOperation;
-use rand::Rng;
-use benchmark_suite_shared::test_utils::all_linearizable;
 
 #[derive(Debug, Clone, PartialEq)]
 pub struct ClientParams {
@@ -158,8 +158,8 @@ pub mod actor_atomicregister {
             self.write_workload = Some(c.write_workload);
             self.partition_size = Some(c.partition_size);
             self.num_keys = Some(c.number_of_keys);
-            let system =
-                crate::kompact_system_provider::global().new_remote_system_with_threads("atomicregister", 4);
+            let system = crate::kompact_system_provider::global()
+                .new_remote_system_with_threads("atomicregister", 4);
             self.system = Some(system);
             let params = ClientParams {
                 num_keys: c.number_of_keys,
@@ -181,7 +181,7 @@ pub mod actor_atomicregister {
                             self.num_keys.unwrap(),
                             self.read_workload.unwrap(),
                             self.write_workload.unwrap(),
-                            false
+                            false,
                         )
                     });
                     let named_reg_f = system.register_by_alias(
@@ -207,7 +207,7 @@ pub mod actor_atomicregister {
                     /*** Add self path to vector of nodes ***/
                     let self_path = ActorPath::Named(NamedPath::with_system(
                         system.system_path(),
-                        vec![format!("atomicreg_actor{}", &self.init_id).into()],
+                        vec![format!("atomicreg_actor{}", &self.init_id)],
                     ));
                     let mut nodes: Vec<ActorPath> = Vec::new();
                     nodes.push(self_path);
@@ -314,8 +314,8 @@ pub mod actor_atomicregister {
 
         fn setup(&mut self, c: Self::ClientConf) -> Self::ClientData {
             println!("Setting up Atomic Register(client)");
-            let system =
-                crate::kompact_system_provider::global().new_remote_system_with_threads("atomicregister", 4);
+            let system = crate::kompact_system_provider::global()
+                .new_remote_system_with_threads("atomicregister", 4);
             let (atomic_register, unique_reg_f) = system.create_and_register(|| {
                 AtomicRegisterActor::with(c.num_keys, c.read_workload, c.write_workload, false)
             });
@@ -386,9 +386,14 @@ pub mod actor_atomicregister {
     }
 
     impl AtomicRegisterActor {
-        fn with(num_keys: u64, read_workload: f32, write_workload: f32, testing: bool) -> AtomicRegisterActor {
+        fn with(
+            num_keys: u64,
+            read_workload: f32,
+            write_workload: f32,
+            testing: bool,
+        ) -> AtomicRegisterActor {
             AtomicRegisterActor {
-                ctx: ComponentContext::new(),
+                ctx: ComponentContext::uninitialised(),
                 read_workload,
                 write_workload,
                 master: None,
@@ -431,7 +436,13 @@ pub mod actor_atomicregister {
                 key,
             };
             if self.testing {
-                self.timestamps.push(KVTimestamp{key, operation: KVOperation::ReadInvokation, value: None, time: Utc::now().timestamp_millis(), sender: self.rank})
+                self.timestamps.push(KVTimestamp {
+                    key,
+                    operation: KVOperation::ReadInvokation,
+                    value: None,
+                    time: Utc::now().timestamp_millis(),
+                    sender: self.rank,
+                })
             }
             self.bcast(AtomicRegisterMessage::Read(read));
         }
@@ -449,7 +460,13 @@ pub mod actor_atomicregister {
                 key,
             };
             if self.testing {
-                self.timestamps.push(KVTimestamp{key, operation: KVOperation::WriteInvokation, value: Some(self.rank), time: Utc::now().timestamp_millis(), sender: self.rank})
+                self.timestamps.push(KVTimestamp {
+                    key,
+                    operation: KVOperation::WriteInvokation,
+                    value: Some(self.rank),
+                    time: Utc::now().timestamp_millis(),
+                    sender: self.rank,
+                })
             }
             self.bcast(AtomicRegisterMessage::Read(read));
         }
@@ -464,7 +481,7 @@ pub mod actor_atomicregister {
                     self.invoke_read(key);
                 }
                 for l in 0..num_writes {
-                    let key = 0 + num_reads + l;
+                    let key = num_reads + l;
                     self.invoke_write(key);
                 }
             } else {
@@ -472,7 +489,7 @@ pub mod actor_atomicregister {
                     self.invoke_write(key);
                 }
                 for l in 0..num_reads {
-                    let key = 0 + num_writes + l;
+                    let key = num_writes + l;
                     self.invoke_read(key);
                 }
             }
@@ -481,7 +498,13 @@ pub mod actor_atomicregister {
         fn read_response(&mut self, key: u64, read_value: u32) -> () {
             self.read_count -= 1;
             if self.testing {
-                self.timestamps.push(KVTimestamp{key, operation: KVOperation::ReadResponse, value: Some(read_value), time: Utc::now().timestamp_millis(), sender: self.rank});
+                self.timestamps.push(KVTimestamp {
+                    key,
+                    operation: KVOperation::ReadResponse,
+                    value: Some(read_value),
+                    time: Utc::now().timestamp_millis(),
+                    sender: self.rank,
+                });
             }
             if self.read_count == 0 && self.write_count == 0 {
                 self.send_done();
@@ -491,14 +514,20 @@ pub mod actor_atomicregister {
         fn write_response(&mut self, key: u64) -> () {
             self.write_count -= 1;
             if self.testing {
-                self.timestamps.push(KVTimestamp{key, operation: KVOperation::WriteResponse, value: Some(self.rank), time: Utc::now().timestamp_millis(), sender: self.rank});
+                self.timestamps.push(KVTimestamp {
+                    key,
+                    operation: KVOperation::WriteResponse,
+                    value: Some(self.rank),
+                    time: Utc::now().timestamp_millis(),
+                    sender: self.rank,
+                });
             }
             if self.read_count == 0 && self.write_count == 0 {
                 self.send_done();
             }
         }
 
-        fn send_done(&self) -> () {
+        fn send_done(&mut self) -> () {
             if !self.testing {
                 self.master
                     .as_ref()
@@ -506,7 +535,7 @@ pub mod actor_atomicregister {
                     .tell_serialised(PartitioningActorMsg::Done, self)
                     .expect("Should serialise");
             } else {
-                let td = PartitioningActorMsg::TestDone(self.timestamps.to_owned());    // TODO memreplace
+                let td = PartitioningActorMsg::TestDone(std::mem::take(&mut self.timestamps));
                 info!(self.ctx.log(), "Sending TestDone");
                 self.master
                     .as_ref()
@@ -524,20 +553,16 @@ pub mod actor_atomicregister {
         }
     }
 
-    impl Provide<ControlPort> for AtomicRegisterActor {
-        fn handle(&mut self, _event: ControlEvent) -> () {
-            // ignore
-        }
-    }
+    ignore_lifecycle!(AtomicRegisterActor);
 
     impl Actor for AtomicRegisterActor {
         type Message = Never;
 
-        fn receive_local(&mut self, _msg: Self::Message) -> () {
+        fn receive_local(&mut self, _msg: Self::Message) -> Handled {
             unimplemented!("Can't be invoked!");
         }
 
-        fn receive_network(&mut self, msg: NetMessage) -> () {
+        fn receive_network(&mut self, msg: NetMessage) -> Handled {
             let sender = msg.sender.clone();
             let ser_id = msg.ser_id();
             match_deser! {msg; {
@@ -583,10 +608,8 @@ pub mod actor_atomicregister {
                                     if readlist.is_empty() {
                                         current_register.first_received_ts = v.ts;
                                         current_register.readval = v.value;
-                                    } else if current_register.skip_impose {
-                                        if current_register.first_received_ts != v.ts {
-                                            current_register.skip_impose = false;
-                                        }
+                                    } else if current_register.skip_impose && current_register.first_received_ts != v.ts {
+                                        current_register.skip_impose = false;
                                     }
                                 }
                                 readlist.insert(v.sender_rank, (v.ts, v.wr, v.value));
@@ -667,35 +690,41 @@ pub mod actor_atomicregister {
                     unimplemented!();
                 },
             }}
+            Handled::Ok
         }
     }
 
     #[test]
-    fn actor_linearizability_test(){
+    fn actor_linearizability_test() {
         let workloads: [(f32, f32); 2] = [(0.5, 0.5), (0.95, 0.05)];
         let mut rng = rand::thread_rng();
-        for (read_workload, write_workload) in workloads.iter(){
+        for (read_workload, write_workload) in workloads.iter() {
             let num_keys: u64 = rng.gen_range(0, 1000) + 100;
             let mut partition_size: u32 = rng.gen_range(3, 9);
-            if partition_size % 2 != 0 { partition_size += 1; }
+            if partition_size % 2 != 0 {
+                partition_size += 1;
+            }
             let mut systems: Vec<KompactSystem> = Vec::new();
             let mut nodes: Vec<ActorPath> = Vec::new();
-            println!("Linearizability test (actor) with partition size: {}, keys: {}, workload: {:?}", partition_size, num_keys, (read_workload, write_workload));
-            for i in 0 .. partition_size {
-                let system =
-                    crate::kompact_system_provider::global().new_remote_system_with_threads(format!("atomicregister{}", i), 4);
+            println!(
+                "Linearizability test (actor) with partition size: {}, keys: {}, workload: {:?}",
+                partition_size,
+                num_keys,
+                (read_workload, write_workload)
+            );
+            for i in 0..partition_size {
+                let system = crate::kompact_system_provider::global()
+                    .new_remote_system_with_threads(format!("atomicregister{}", i), 4);
                 let (atomic_register, unique_reg_f) = system.create_and_register(|| {
                     AtomicRegisterActor::with(
                         num_keys,
                         read_workload.clone(),
                         write_workload.clone(),
-                        true
+                        true,
                     )
                 });
-                let named_reg_f = system.register_by_alias(
-                    &atomic_register,
-                    format!("atomicreg_actor{}", i),
-                );
+                let named_reg_f =
+                    system.register_by_alias(&atomic_register, format!("atomicreg_actor{}", i));
 
                 unique_reg_f.wait_expect(
                     Duration::from_millis(1000),
@@ -723,15 +752,9 @@ pub mod actor_atomicregister {
             /*** Setup partitioning actor ***/
             println!("\nNodes and systems set-up, creating partitioning actor\n");
             let prepare_latch = Arc::new(CountdownEvent::new(1));
-            let (p, f) = kpromise::<Vec<KVTimestamp>>();
+            let (p, f) = promise::<Vec<KVTimestamp>>();
             let (partitioning_actor, unique_reg_f) = systems[0].create_and_register(|| {
-                PartitioningActor::with(
-                    prepare_latch.clone(),
-                    None,
-                    1,
-                    nodes,
-                    Some(p),
-                )
+                PartitioningActor::with(prepare_latch.clone(), None, 1, nodes, Some(p))
             });
             unique_reg_f.wait_expect(
                 Duration::from_millis(1000),
@@ -889,8 +912,8 @@ pub mod mixed_atomicregister {
             self.write_workload = Some(c.write_workload);
             self.partition_size = Some(c.partition_size);
             self.num_keys = Some(c.number_of_keys);
-            let system =
-                crate::kompact_system_provider::global().new_remote_system_with_threads("atomicregister", 4);
+            let system = crate::kompact_system_provider::global()
+                .new_remote_system_with_threads("atomicregister", 4);
             self.system = Some(system);
             let params = ClientParams {
                 num_keys: c.number_of_keys,
@@ -926,7 +949,7 @@ pub mod mixed_atomicregister {
                             self.read_workload.unwrap(),
                             self.write_workload.unwrap(),
                             bcast_comp.actor_ref(),
-                            false
+                            false,
                         )
                     });
                     let named_reg_f = system.register_by_alias(
@@ -952,10 +975,10 @@ pub mod mixed_atomicregister {
                     /*** Add self path to vector of nodes ***/
                     let self_path = ActorPath::Named(NamedPath::with_system(
                         system.system_path(),
-                        vec![format!("atomicreg_comp{}", &self.init_id).into()],
+                        vec![format!("atomicreg_comp{}", &self.init_id)],
                     ));
                     let mut nodes: Vec<ActorPath> = Vec::new();
-                    nodes.push(self_path.clone());
+                    nodes.push(self_path);
                     for i in 0..(self.partition_size.unwrap() - 1) as usize {
                         nodes.push(d[i].clone());
                     }
@@ -989,7 +1012,9 @@ pub mod mixed_atomicregister {
                     partitioning_actor_f
                         .wait_timeout(Duration::from_millis(1000))
                         .expect("PartitioningComp never started!");
-                    partitioning_actor.actor_ref().tell(IterationControlMsg::Prepare(None));
+                    partitioning_actor
+                        .actor_ref()
+                        .tell(IterationControlMsg::Prepare(None));
 
                     self.init_id += 1;
                     self.finished_latch = Some(finished_latch);
@@ -1082,8 +1107,8 @@ pub mod mixed_atomicregister {
 
         fn setup(&mut self, c: Self::ClientConf) -> Self::ClientData {
             println!("Setting up Atomic Register(client)");
-            let system =
-                crate::kompact_system_provider::global().new_remote_system_with_threads("atomicregister", 4);
+            let system = crate::kompact_system_provider::global()
+                .new_remote_system_with_threads("atomicregister", 4);
             /*** Setup Broadcast component ***/
             let (bcast_comp, unique_reg_f) = system.create_and_register(|| BroadcastComp::new());
             let bcast_comp_f = system.start_notify(&bcast_comp);
@@ -1097,7 +1122,13 @@ pub mod mixed_atomicregister {
 
             /*** Setup atomic register ***/
             let (atomic_register, unique_reg_f) = system.create_and_register(|| {
-                AtomicRegisterComp::with(c.num_keys, c.read_workload, c.write_workload, bcast_comp.actor_ref(), false)
+                AtomicRegisterComp::with(
+                    c.num_keys,
+                    c.read_workload,
+                    c.write_workload,
+                    bcast_comp.actor_ref(),
+                    false,
+                )
             });
             let named_reg_f = system.register_by_alias(&atomic_register, "atomicreg_comp");
             unique_reg_f.wait_expect(
@@ -1195,7 +1226,7 @@ pub mod mixed_atomicregister {
     #[derive(ComponentDefinition)]
     struct BroadcastComp {
         ctx: ComponentContext<BroadcastComp>,
-        bcast_port: ProvidedPort<BroadcastPort, BroadcastComp>,
+        bcast_port: ProvidedPort<BroadcastPort>,
         nodes: Option<Vec<ActorPath>>,
         sender: Option<ActorPath>,
     }
@@ -1203,22 +1234,18 @@ pub mod mixed_atomicregister {
     impl BroadcastComp {
         fn new() -> BroadcastComp {
             BroadcastComp {
-                ctx: ComponentContext::new(),
-                bcast_port: ProvidedPort::new(),
+                ctx: ComponentContext::uninitialised(),
+                bcast_port: ProvidedPort::uninitialised(),
                 nodes: None,
                 sender: None,
             }
         }
     }
 
-    impl Provide<ControlPort> for BroadcastComp {
-        fn handle(&mut self, _event: <ControlPort as Port>::Request) -> () {
-            // ignore
-        }
-    }
+    ignore_lifecycle!(BroadcastComp);
 
     impl Provide<BroadcastPort> for BroadcastComp {
-        fn handle(&mut self, request: BroadcastRequest) -> () {
+        fn handle(&mut self, request: BroadcastRequest) -> Handled {
             let nodes = self.nodes.as_ref().unwrap();
             let sender = self.sender.as_ref().unwrap();
             let payload = request.0;
@@ -1228,27 +1255,30 @@ pub mod mixed_atomicregister {
                     &sender.using_dispatcher(self),
                 );
             }
+            Handled::Ok
         }
     }
 
     impl Actor for BroadcastComp {
         type Message = WithSender<CacheInfo, CacheNodesAck>;
 
-        fn receive_local(&mut self, msg: Self::Message) -> () {
+        fn receive_local(&mut self, msg: Self::Message) -> Handled {
             self.nodes = Some(msg.nodes.clone());
             self.sender = Some(msg.sender.clone());
             msg.reply(CacheNodesAck);
+            Handled::Ok
         }
 
-        fn receive_network(&mut self, _msg: NetMessage) -> () {
+        fn receive_network(&mut self, _msg: NetMessage) -> Handled {
             // ignore
+            Handled::Ok
         }
     }
 
     #[derive(ComponentDefinition)]
     struct AtomicRegisterComp {
         ctx: ComponentContext<AtomicRegisterComp>,
-        bcast_port: RequiredPort<BroadcastPort, AtomicRegisterComp>,
+        bcast_port: RequiredPort<BroadcastPort>,
         bcast_ref: ActorRef<WithSender<CacheInfo, CacheNodesAck>>,
         read_workload: f32,
         write_workload: f32,
@@ -1277,8 +1307,8 @@ pub mod mixed_atomicregister {
             testing: bool,
         ) -> AtomicRegisterComp {
             AtomicRegisterComp {
-                ctx: ComponentContext::new(),
-                bcast_port: RequiredPort::new(),
+                ctx: ComponentContext::uninitialised(),
+                bcast_port: RequiredPort::uninitialised(),
                 bcast_ref,
                 read_workload,
                 write_workload,
@@ -1322,7 +1352,13 @@ pub mod mixed_atomicregister {
                 key,
             };
             if self.testing {
-                self.timestamps.push(KVTimestamp{key, operation: KVOperation::ReadInvokation, value: None, time: Utc::now().timestamp_millis(), sender: self.rank})
+                self.timestamps.push(KVTimestamp {
+                    key,
+                    operation: KVOperation::ReadInvokation,
+                    value: None,
+                    time: Utc::now().timestamp_millis(),
+                    sender: self.rank,
+                })
             }
             self.bcast_port
                 .trigger(BroadcastRequest(AtomicRegisterMessage::Read(read)));
@@ -1341,7 +1377,13 @@ pub mod mixed_atomicregister {
                 key,
             };
             if self.testing {
-                self.timestamps.push(KVTimestamp{key, operation: KVOperation::WriteInvokation, value: Some(self.rank), time: Utc::now().timestamp_millis(), sender: self.rank})
+                self.timestamps.push(KVTimestamp {
+                    key,
+                    operation: KVOperation::WriteInvokation,
+                    value: Some(self.rank),
+                    time: Utc::now().timestamp_millis(),
+                    sender: self.rank,
+                })
             }
             self.bcast_port
                 .trigger(BroadcastRequest(AtomicRegisterMessage::Read(read)));
@@ -1357,7 +1399,7 @@ pub mod mixed_atomicregister {
                     self.invoke_read(key);
                 }
                 for l in 0..num_writes {
-                    let key = 0 + num_reads + l;
+                    let key = num_reads + l;
                     self.invoke_write(key);
                 }
             } else {
@@ -1365,7 +1407,7 @@ pub mod mixed_atomicregister {
                     self.invoke_write(key);
                 }
                 for l in 0..num_reads {
-                    let key = 0 + num_writes + l;
+                    let key = num_writes + l;
                     self.invoke_read(key);
                 }
             }
@@ -1374,7 +1416,13 @@ pub mod mixed_atomicregister {
         fn read_response(&mut self, key: u64, read_value: u32) -> () {
             self.read_count -= 1;
             if self.testing {
-                self.timestamps.push(KVTimestamp{key, operation: KVOperation::ReadResponse, value: Some(read_value), time: Utc::now().timestamp_millis(), sender: self.rank});
+                self.timestamps.push(KVTimestamp {
+                    key,
+                    operation: KVOperation::ReadResponse,
+                    value: Some(read_value),
+                    time: Utc::now().timestamp_millis(),
+                    sender: self.rank,
+                });
             }
             if self.read_count == 0 && self.write_count == 0 {
                 self.send_done();
@@ -1384,7 +1432,13 @@ pub mod mixed_atomicregister {
         fn write_response(&mut self, key: u64) -> () {
             self.write_count -= 1;
             if self.testing {
-                self.timestamps.push(KVTimestamp{key, operation: KVOperation::WriteResponse, value: Some(self.rank), time: Utc::now().timestamp_millis(), sender: self.rank});
+                self.timestamps.push(KVTimestamp {
+                    key,
+                    operation: KVOperation::WriteResponse,
+                    value: Some(self.rank),
+                    time: Utc::now().timestamp_millis(),
+                    sender: self.rank,
+                });
             }
             if self.read_count == 0 && self.write_count == 0 {
                 self.send_done();
@@ -1409,28 +1463,27 @@ pub mod mixed_atomicregister {
         }
     }
 
-    impl Provide<ControlPort> for AtomicRegisterComp {
-        fn handle(&mut self, _event: <ControlPort as Port>::Request) -> () {
-            // ignore
-        }
-    }
+    ignore_lifecycle!(AtomicRegisterComp);
 
     impl Require<BroadcastPort> for AtomicRegisterComp {
-        fn handle(&mut self, _event: <BroadcastPort as Port>::Indication) -> () {
-            // ignore
+        fn handle(&mut self, _event: <BroadcastPort as Port>::Indication) -> Handled {
+            Handled::Ok //ignore
         }
     }
 
     impl Actor for AtomicRegisterComp {
         type Message = CacheNodesAck;
 
-        fn receive_local(&mut self, _msg: Self::Message) -> () {
+        fn receive_local(&mut self, _msg: Self::Message) -> Handled {
             let master = self.master.as_ref().unwrap();
             let init_ack = PartitioningActorMsg::InitAck(self.current_run_id);
-            master.tell_serialised(init_ack, self).expect("Should serialise");
+            master
+                .tell_serialised(init_ack, self)
+                .expect("Should serialise");
+            Handled::Ok
         }
 
-        fn receive_network(&mut self, msg: NetMessage) -> () {
+        fn receive_network(&mut self, msg: NetMessage) -> Handled {
             let sender = msg.sender.clone();
             match_deser! {msg; {
                 p: PartitioningActorMsg [PartitioningActorSer] => {
@@ -1480,10 +1533,8 @@ pub mod mixed_atomicregister {
                                     if readlist.is_empty() {
                                         current_register.first_received_ts = v.ts;
                                         current_register.readval = v.value;
-                                    } else if current_register.skip_impose {
-                                        if current_register.first_received_ts != v.ts {
-                                            current_register.skip_impose = false;
-                                        }
+                                    } else if current_register.skip_impose && current_register.first_received_ts != v.ts {
+                                        current_register.skip_impose = false;
                                     }
                                 }
                                 readlist.insert(v.sender_rank, (v.ts, v.wr, v.value));
@@ -1562,24 +1613,31 @@ pub mod mixed_atomicregister {
                 },
                 !Err(e) => error!(self.ctx.log(), "Error deserialising msg: {:?}", e),
             }}
+            Handled::Ok
         }
     }
 
-
     #[test]
-    fn mixed_linearizability_test(){
+    fn mixed_linearizability_test() {
         let workloads: [(f32, f32); 2] = [(0.5, 0.5), (0.95, 0.05)];
         let mut rng = rand::thread_rng();
-        for (read_workload, write_workload) in workloads.iter(){
+        for (read_workload, write_workload) in workloads.iter() {
             let num_keys: u64 = rng.gen_range(0, 1000) + 100;
             let mut partition_size: u32 = rng.gen_range(3, 9);
-            if partition_size % 2 != 0 { partition_size += 1; }
+            if partition_size % 2 != 0 {
+                partition_size += 1;
+            }
             let mut systems: Vec<KompactSystem> = Vec::new();
             let mut nodes: Vec<ActorPath> = Vec::new();
-            println!("Linearizability test (actor) with partition size: {}, keys: {}, workload: {:?}", partition_size, num_keys, (read_workload, write_workload));
-            for i in 0 .. partition_size {
-                let system =
-                    crate::kompact_system_provider::global().new_remote_system_with_threads(format!("atomicregister{}", i), 4);
+            println!(
+                "Linearizability test (actor) with partition size: {}, keys: {}, workload: {:?}",
+                partition_size,
+                num_keys,
+                (read_workload, write_workload)
+            );
+            for i in 0..partition_size {
+                let system = crate::kompact_system_provider::global()
+                    .new_remote_system_with_threads(format!("atomicregister{}", i), 4);
 
                 /*** Setup Broadcast component ***/
                 let (bcast_comp, unique_reg_f) =
@@ -1601,13 +1659,11 @@ pub mod mixed_atomicregister {
                         read_workload.clone(),
                         write_workload.clone(),
                         bcast_comp.actor_ref(),
-                        true
+                        true,
                     )
                 });
-                let named_reg_f = system.register_by_alias(
-                    &atomic_register,
-                    format!("atomicreg_comp{}", i),
-                );
+                let named_reg_f =
+                    system.register_by_alias(&atomic_register, format!("atomicreg_comp{}", i));
 
                 unique_reg_f.wait_expect(
                     Duration::from_millis(1000),
@@ -1637,15 +1693,9 @@ pub mod mixed_atomicregister {
             }
             /*** Setup partitioning actor ***/
             let prepare_latch = Arc::new(CountdownEvent::new(1));
-            let (p, f) = kpromise::<Vec<KVTimestamp>>();
+            let (p, f) = promise::<Vec<KVTimestamp>>();
             let (partitioning_actor, unique_reg_f) = systems[0].create_and_register(|| {
-                PartitioningActor::with(
-                    prepare_latch.clone(),
-                    None,
-                    1,
-                    nodes,
-                    Some(p),
-                )
+                PartitioningActor::with(prepare_latch.clone(), None, 1, nodes, Some(p))
             });
             unique_reg_f.wait_expect(
                 Duration::from_millis(1000),
@@ -1655,7 +1705,9 @@ pub mod mixed_atomicregister {
             partitioning_actor_f
                 .wait_timeout(Duration::from_millis(1000))
                 .expect("PartitioningComp never started!");
-            partitioning_actor.actor_ref().tell(IterationControlMsg::Prepare(None));
+            partitioning_actor
+                .actor_ref()
+                .tell(IterationControlMsg::Prepare(None));
 
             prepare_latch.wait();
             let partitioning_actor_ref = partitioning_actor.actor_ref();
@@ -1736,6 +1788,7 @@ struct Write {
     value: u32,
 }
 
+#[derive(Clone)]
 struct AtomicRegisterSer;
 //const ATOMIC_REGISTER_SER: AtomicRegisterSer = AtomicRegisterSer {};
 const READ_ID: i8 = 1;
