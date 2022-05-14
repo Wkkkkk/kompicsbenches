@@ -107,3 +107,5 @@ out/
 *.pdf
 *.pyc
 *.png
+.bsp/sbt.json
+project/build.properties

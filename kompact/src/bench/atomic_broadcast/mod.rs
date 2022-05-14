@@ -1,5 +1,6 @@
 pub mod atomic_broadcast;
 mod ble;
+mod vr_le;
 mod client;
 mod communicator;
 mod messages;
