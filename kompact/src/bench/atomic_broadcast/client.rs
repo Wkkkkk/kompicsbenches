@@ -5,7 +5,7 @@ use super::messages::{
 #[cfg(feature = "simulate_partition")]
 use crate::bench::atomic_broadcast::messages::PartitioningExpMsg;
 use crate::bench::atomic_broadcast::{
-    atomic_broadcast::ReconfigurationPolicy,
+    atomic_broadcast::{NetworkScenario, ReconfigurationPolicy},
     messages::{ReconfigurationProposal, ReconfigurationResp},
     util::exp_params::*,
 };
@@ -89,6 +89,7 @@ pub struct Client {
     num_proposals: u64,
     num_concurrent_proposals: u64,
     nodes: HashMap<u64, ActorPath>,
+    network_scenario: NetworkScenario,
     reconfig: Option<(ReconfigurationPolicy, Vec<u64>)>,
     leader_election_latch: Arc<CountdownEvent>,
     finished_latch: Arc<CountdownEvent>,
@@ -133,6 +134,7 @@ impl Client {
         num_proposals: u64,
         num_concurrent_proposals: u64,
         nodes: HashMap<u64, ActorPath>,
+        network_scenario: NetworkScenario,
         reconfig: Option<(ReconfigurationPolicy, Vec<u64>)>,
         timeout: Duration,
         preloaded_log_size: u64,
@@ -145,6 +147,7 @@ impl Client {
             num_proposals,
             num_concurrent_proposals,
             nodes,
+            network_scenario,
             reconfig,
             leader_election_latch,
             finished_latch,
@@ -442,86 +445,118 @@ impl Client {
             })
             .copied()
             .collect();
-        if self.nodes.len() == 5 {
-            // Deadlock scenario
-            let lagging_follower = *followers.first().unwrap(); // first follower to be partitioned from the leader
-            info!(self.ctx.log(), "Creating partition. leader: {}, term: {}, lagging follower connected to majority: {}, num_responses: {}", self.current_leader, self.leader_round, lagging_follower, self.responses.len());
-            for pid in &followers {
-                let disconnect_peers: Vec<_> = if pid == &lagging_follower {
-                    vec![self.current_leader]
-                } else {
-                    self.nodes
-                        .keys()
-                        .filter(|p| *p != &lagging_follower && *p != pid)
-                        .copied()
-                        .collect()
-                };
+        match self.network_scenario {
+            NetworkScenario::QuorumLoss => {
+                assert!(self.nodes.len() >= 5);
+                let fully_connected_node = *followers.first().unwrap(); // first follower to be partitioned from the leader
+                let rest: Vec<u64> = self
+                    .nodes
+                    .keys()
+                    .filter(|pid| *pid != &fully_connected_node)
+                    .copied()
+                    .collect();
                 info!(
                     self.ctx.log(),
-                    "Node {} getting disconnected from {:?}", pid, disconnect_peers
+                    "Creating {:?} partition. fully-connected: {}, leader: {}, num_responses: {}",
+                    self.network_scenario,
+                    fully_connected_node,
+                    self.current_leader,
+                    self.responses.len()
                 );
-                let ap = self.nodes.get(&pid).expect("No follower ap");
-                ap.tell_serialised(
-                    PartitioningExpMsg::DisconnectPeers(disconnect_peers, None),
-                    self,
-                )
-                .expect("Should serialise");
+                for pid in &rest {
+                    let ap = self.nodes.get(&pid).expect("No node ap");
+                    ap.tell_serialised(
+                        PartitioningExpMsg::DisconnectPeers(rest.clone(), None),
+                        self,
+                    )
+                    .expect("Should serialise");
+                }
             }
-            let non_lagging: Vec<u64> = followers
-                .iter()
-                .filter(|pid| *pid != &lagging_follower)
-                .copied()
-                .collect();
-            leader_ap
-                .tell_serialised(
-                    PartitioningExpMsg::DisconnectPeers(non_lagging, Some(lagging_follower)),
-                    self,
-                )
-                .expect("Should serialise");
-        } else if self.nodes.len() == 3 {
-            // Chained scenario
-            let disconnected_follower = followers.first().unwrap();
-            let ap = self.nodes.get(disconnected_follower).unwrap();
-            ap.tell_serialised(
-                PartitioningExpMsg::DisconnectPeers(vec![self.current_leader], None),
-                self,
-            )
-            .expect("Should serialise!");
-            leader_ap
-                .tell_serialised(
-                    PartitioningExpMsg::DisconnectPeers(vec![*disconnected_follower], None),
+            NetworkScenario::ConstrainedElection => {
+                assert!(self.nodes.len() >= 5);
+                let lagging_follower = *followers.first().unwrap(); // first follower to be partitioned from the leader
+                info!(self.ctx.log(), "Creating partition {:?}. leader: {}, term: {}, lagging follower connected to majority: {}, num_responses: {}", self.network_scenario, self.current_leader, self.leader_round, lagging_follower, self.responses.len());
+                for pid in &followers {
+                    let disconnect_peers: Vec<_> = if pid == &lagging_follower {
+                        vec![self.current_leader] // lagging node only disconnects from leader
+                    } else {
+                        // the rest disconnects to everybody but the lagging node
+                        self.nodes
+                            .keys()
+                            .filter(|p| *p != &lagging_follower && *p != pid)
+                            .copied()
+                            .collect()
+                    };
+                    info!(
+                        self.ctx.log(),
+                        "Node {} getting disconnected from {:?}", pid, disconnect_peers
+                    );
+                    let ap = self.nodes.get(&pid).expect("No follower ap");
+                    ap.tell_serialised(
+                        PartitioningExpMsg::DisconnectPeers(disconnect_peers, None),
+                        self,
+                    )
+                    .expect("Should serialise");
+                }
+                let non_lagging: Vec<u64> = followers
+                    .iter()
+                    .filter(|pid| *pid != &lagging_follower)
+                    .copied()
+                    .collect();
+                leader_ap
+                    .tell_serialised(
+                        PartitioningExpMsg::DisconnectPeers(non_lagging, Some(lagging_follower)),
+                        self,
+                    )
+                    .expect("Should serialise");
+            }
+            NetworkScenario::Chained => {
+                // Chained scenario
+                let disconnected_follower = followers.first().unwrap();
+                let ap = self.nodes.get(disconnected_follower).unwrap();
+                info!(self.ctx.log(), "Creating {:?} partition. disconnected follower: {}, leader: {}, num_responses: {}", self.network_scenario, disconnected_follower, self.current_leader, self.responses.len());
+                ap.tell_serialised(
+                    PartitioningExpMsg::DisconnectPeers(vec![self.current_leader], None),
                     self,
                 )
                 .expect("Should serialise!");
-            info!(
-                self.ctx.log(),
-                "Creating partition. Disconnecting leader: {} from follower: {}, num_responses: {}",
-                self.current_leader,
-                disconnected_follower,
-                self.responses.len()
-            );
-            /*
-            // Periodic full scenario
-            let disconnected_follower = *followers.first().unwrap();
-            let intermediate_duration = self.ctx.config()["partition_experiment"]
-                ["intermediate_duration"]
-                .as_duration()
-                .expect("No intermediate duration!");
-            let timer = self.schedule_periodic(
-                Duration::from_millis(0),
-                intermediate_duration,
-                move |c, _| {
-                    if c.periodic_partition_timer.is_some() {
-                        c.periodic_partition(disconnected_follower);
-                    }
-                    Handled::Ok
-                },
-            );
-            self.periodic_partition_timer = Some(timer);
-            return; // end of periodic partition
-             */
-        } else {
-            unimplemented!()
+                leader_ap
+                    .tell_serialised(
+                        PartitioningExpMsg::DisconnectPeers(vec![*disconnected_follower], None),
+                        self,
+                    )
+                    .expect("Should serialise!");
+                info!(
+                    self.ctx.log(),
+                    "Creating partition. Disconnecting leader: {} from follower: {}, num_responses: {}",
+                    self.current_leader,
+                    disconnected_follower,
+                    self.responses.len()
+                );
+            }
+            NetworkScenario::PeriodicFull => {
+                // Periodic full scenario
+                let disconnected_follower = *followers.first().unwrap();
+                let intermediate_duration = self.ctx.config()["partition_experiment"]
+                    ["intermediate_duration"]
+                    .as_duration()
+                    .expect("No intermediate duration!");
+                let timer = self.schedule_periodic(
+                    Duration::from_millis(0),
+                    intermediate_duration,
+                    move |c, _| {
+                        if c.periodic_partition_timer.is_some() {
+                            c.periodic_partition(disconnected_follower);
+                        }
+                        Handled::Ok
+                    },
+                );
+                self.periodic_partition_timer = Some(timer);
+                return; // end of periodic partition
+            }
+            NetworkScenario::FullyConnected => {
+                return;
+            }
         }
         let partition_duration = self.ctx.config()["partition_experiment"]["partition_duration"]
             .as_duration()
@@ -588,8 +623,8 @@ impl Actor for Client {
                 assert_ne!(self.current_leader, 0);
                 #[cfg(feature = "track_timestamps")]
                 {
-                    self.leader_changes.push((SystemTime::now(), (self.current_leader, self.leader_round)));
-
+                    self.leader_changes
+                        .push((SystemTime::now(), (self.current_leader, self.leader_round)));
                 }
                 #[cfg(feature = "periodic_client_logging")]
                 {

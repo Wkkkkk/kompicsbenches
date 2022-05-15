@@ -1,51 +1,28 @@
-use crate::bench::atomic_broadcast::messages::{
-    paxos::ballot_leader_election::*, StopMsg as NetStopMsg, StopMsgDeser,
-};
 #[cfg(feature = "measure_io")]
 use crate::bench::atomic_broadcast::util::io_metadata::IOMetaData;
+use crate::bench::atomic_broadcast::{
+    ble::{Ballot, BallotLeaderElection, Stop},
+    messages::{
+        paxos::{ballot_leader_election::*, vr_leader_election::*},
+        StopMsg as NetStopMsg, StopMsgDeser,
+    },
+};
 use hashbrown::HashSet;
 use kompact::prelude::*;
-use omnipaxos::leader_election::{Leader, Round};
+use omnipaxos::leader_election::Leader;
 use std::time::Duration;
 
-#[derive(Clone, Copy, Eq, Debug, Default, Ord, PartialOrd, PartialEq)]
-pub struct Ballot {
-    pub n: u32,
-    pub pid: u64,
-}
-
-impl Ballot {
-    pub fn with(n: u32, pid: u64) -> Ballot {
-        Ballot { n, pid }
-    }
-}
-
-impl Round for Ballot {}
-
-#[derive(Debug)]
-pub struct Stop(pub Ask<u64, ()>); // pid
-
-pub struct BallotLeaderElection;
-
-impl Port for BallotLeaderElection {
-    type Indication = Leader<Ballot>;
-    type Request = ();
-}
-
 #[derive(ComponentDefinition)]
-pub struct BallotLeaderComp {
-    // TODO decouple from kompact, similar style to tikv_raft with tick() replacing timers
+pub struct VRLeaderElectionComp {
     ctx: ComponentContext<Self>,
     ble_port: ProvidedPort<BallotLeaderElection>,
     pid: u64,
-    pub(crate) peers: Vec<ActorPath>,
+    pub(crate) views: Vec<(u64, ActorPath)>,
+    view_number: u32,
     hb_round: u32,
-    ballots: Vec<(Ballot, bool)>,
-    current_ballot: Ballot, // (round, pid)
-    candidate: bool,
-    leader: Option<Ballot>,
+    leader_is_alive: bool,
+    viewchange_status: ViewChangeStatus,
     hb_delay: u64,
-    delta: u64,
     pub majority: usize,
     timer: Option<ScheduledTimer>,
     stopped: bool,
@@ -59,48 +36,29 @@ pub struct BallotLeaderComp {
     disconnected_peers: Vec<u64>,
 }
 
-impl BallotLeaderComp {
+impl VRLeaderElectionComp {
     pub fn with(
-        peers: Vec<ActorPath>,
+        views: Vec<(u64, ActorPath)>,
         pid: u64,
         hb_delay: u64,
-        delta: u64,
         quick_timeout: bool,
-        initial_leader: Option<Leader<Ballot>>,
         initial_election_factor: u64,
-    ) -> BallotLeaderComp {
-        let n = &peers.len() + 1;
-        let (leader, initial_ballot) = match initial_leader {
-            Some(l) => {
-                let leader_ballot = Ballot::with(l.round.n, l.pid);
-                let initial_ballot = if l.pid == pid {
-                    leader_ballot
-                } else {
-                    Ballot::with(0, pid)
-                };
-                (Some(leader_ballot), initial_ballot)
-            }
-            None => {
-                let initial_ballot = Ballot::with(0, pid);
-                (None, initial_ballot)
-            }
-        };
-        BallotLeaderComp {
+    ) -> VRLeaderElectionComp {
+        let n = &views.len();
+        VRLeaderElectionComp {
             ctx: ComponentContext::uninitialised(),
             ble_port: ProvidedPort::uninitialised(),
             pid,
             majority: n / 2 + 1, // +1 because peers is exclusive ourselves
-            peers,
+            views,
+            view_number: 0,
             hb_round: 0,
-            ballots: Vec::with_capacity(n),
-            current_ballot: initial_ballot,
-            candidate: true,
-            leader,
+            leader_is_alive: false,
+            viewchange_status: ViewChangeStatus::Elected(Ballot::default()),
             hb_delay,
-            delta,
             timer: None,
             stopped: false,
-            stopped_peers: HashSet::with_capacity(n),
+            stopped_peers: HashSet::with_capacity(*n - 1),
             stop_ask: None,
             quick_timeout,
             initial_election_factor,
@@ -111,110 +69,13 @@ impl BallotLeaderComp {
         }
     }
 
+    /*
     /// Sets initial state after creation. Should only be used before being started.
     pub fn set_initial_leader(&mut self, l: Leader<Ballot>) {
-        assert!(self.leader.is_none());
-        let leader_ballot = Ballot::with(l.round.n, l.pid);
-        self.leader = Some(leader_ballot);
-        if l.pid == self.pid {
-            self.current_ballot = leader_ballot;
-            self.candidate = true;
-        } else {
-            self.current_ballot = Ballot::with(0, self.pid);
-            self.candidate = false;
-        };
-        self.quick_timeout = false;
-        self.ble_port.trigger(Leader::with(l.pid, leader_ballot));
+        self.viewchange_status = ViewChangeStatus::Elected(l.round);
+        self.ble_port.trigger(Leader::with(l.pid, l.round));
     }
-
-    fn check_leader(&mut self) {
-        let ballots = std::mem::take(&mut self.ballots);
-        // info!(self.ctx.log(), "check leader ballots: {:?}", ballots);
-        let top_ballot = ballots
-            .into_iter()
-            .filter_map(|(ballot, candidate)| {
-                if candidate == true {
-                    Some(ballot)
-                } else {
-                    None
-                }
-            })
-            .max()
-            .unwrap_or_default();
-        if top_ballot < self.leader.unwrap_or_default() {
-            // did not get HB from leader
-            debug!(
-                self.ctx.log(),
-                "Did not get hb from leader. top: {:?}, leader: {:?}", top_ballot, self.leader
-            );
-            self.current_ballot.n = self.leader.unwrap_or_default().n + 1;
-            self.leader = None;
-            self.candidate = true;
-        } else if self.leader != Some(top_ballot) {
-            // got a new leader with greater ballot
-            self.quick_timeout = false;
-            self.leader = Some(top_ballot);
-            let top_pid = top_ballot.pid;
-            if self.pid == top_pid {
-                self.candidate = true;
-            } else {
-                self.candidate = false;
-            }
-            self.ble_port.trigger(Leader::with(top_pid, top_ballot));
-        }
-    }
-
-    fn check_leader_multipaxos(&mut self) {
-        let ballots = std::mem::take(&mut self.ballots);
-        // info!(self.ctx.log(), "check leader ballots: {:?}", ballots);
-        let top_ballot = ballots
-            .into_iter()
-            .filter_map(|(ballot, candidate)| {
-                if candidate == true {
-                    Some(ballot)
-                } else {
-                    None
-                }
-            })
-            .max()
-            .unwrap_or_default();
-        if top_ballot < self.leader.unwrap_or_default() {
-            // did not get HB from leader
-            debug!(
-                self.ctx.log(),
-                "Did not get hb from leader. top: {:?}, leader: {:?}", top_ballot, self.leader
-            );
-            self.current_ballot.n = self.leader.unwrap_or_default().n + 1;
-            self.leader = Some(self.current_ballot);
-            self.ble_port.trigger(Leader::with(self.pid, self.current_ballot));
-        }
-    }
-
-    fn check_leader_vr(&mut self) {
-        let ballots = std::mem::take(&mut self.ballots);
-        // info!(self.ctx.log(), "check leader ballots: {:?}", ballots);
-        let top_ballot = ballots
-            .into_iter()
-            .filter_map(|(ballot, candidate)| {
-                if candidate == true {
-                    Some(ballot)
-                } else {
-                    None
-                }
-            })
-            .max()
-            .unwrap_or_default();
-        if top_ballot < self.leader.unwrap_or_default() {
-            // did not get HB from leader
-            debug!(
-                self.ctx.log(),
-                "Did not get hb from leader. top: {:?}, leader: {:?}", top_ballot, self.leader
-            );
-            self.current_ballot.n = self.leader.unwrap_or_default().n + 1;
-            self.leader = Some(self.current_ballot);
-            self.ble_port.trigger(Leader::with(self.pid, self.current_ballot));
-        }
-    }
+    */
 
     fn new_hb_round(&mut self) {
         let delay = if self.quick_timeout {
@@ -224,32 +85,69 @@ impl BallotLeaderComp {
             self.hb_delay
         };
         self.hb_round += 1;
-        for peer in &self.peers {
-            let hb_request = HeartbeatRequest::with(self.hb_round);
-            #[cfg(feature = "measure_io")]
-                {
-                    self.io_metadata.update_sent(&hb_request);
-                }
-            peer.tell_serialised(HeartbeatMsg::Request(hb_request), self)
-                .expect("HBRequest should serialise!");
+        let hb_request = HeartbeatRequest::with(self.hb_round);
+        #[cfg(feature = "measure_io")]
+        {
+            self.io_metadata.update_sent(&hb_request);
         }
-        self.start_timer(delay);
+        let leader_ballot = match self.viewchange_status {
+            ViewChangeStatus::Elected(b) => b,
+            _ => panic!(
+                "Tried to send HBRequest without elected leader: {:?}",
+                self.viewchange_status
+            ),
+        };
+        self.leader_is_alive = false;
+        let (_, leader_ap) = self
+            .views
+            .iter()
+            .find(|x| x.0 == leader_ballot.pid)
+            .unwrap();
+        leader_ap
+            .tell_serialised(HeartbeatMsg::Request(hb_request), self)
+            .expect("HBRequest should serialise!");
+        self.start_timer(delay, leader_ballot);
     }
 
-    fn hb_timeout(&mut self) -> Handled {
-        if self.ballots.len() + 1 >= self.majority {
-            self.ballots.push((self.current_ballot, self.candidate));
-            self.check_leader();
-        } else {
-            self.ballots.clear();
-            self.candidate = false;
+    fn hb_timeout(&mut self, b: Ballot) -> Handled {
+        match self.viewchange_status {
+            ViewChangeStatus::Elected(l) => {
+                if l == b {
+                    if self.leader_is_alive {
+                        self.new_hb_round();
+                    } else {
+                        let b = self.get_next_view();
+                        self.viewchange_status = ViewChangeStatus::ViewChange(b, 1);
+                        for (_, peer) in self.views.iter().filter(|x| x.0 != self.pid) {
+                            peer.tell_serialised(VRMsg::StartViewChange(b), self)
+                                .expect("HBRequest should serialise!");
+                        }
+                    }
+                }
+            }
+            _ => {}
         }
-        self.new_hb_round();
         Handled::Ok
     }
 
-    fn start_timer(&mut self, t: u64) {
-        let timer = self.schedule_once(Duration::from_millis(t), move |c, _| c.hb_timeout());
+    fn get_next_view(&mut self) -> Ballot {
+        self.view_number += 1;
+        let (candidate, _) = self
+            .views
+            .get(self.view_number as usize % self.views.len())
+            .unwrap();
+        Ballot::with(self.view_number as u32, *candidate)
+    }
+
+    fn start_view_change(&self, b: Ballot) {
+        for (_, peer) in self.views.iter().filter(|x| x.0 != self.pid) {
+            peer.tell_serialised(VRMsg::StartViewChange(b), self)
+                .expect("VRMsg should serialise!");
+        }
+    }
+
+    fn start_timer(&mut self, t: u64, b: Ballot) {
+        let timer = self.schedule_once(Duration::from_millis(t), move |c, _| c.hb_timeout(b));
         self.timer = Some(timer);
     }
 
@@ -290,13 +188,11 @@ impl BallotLeaderComp {
     }
 }
 
-impl ComponentLifecycle for BallotLeaderComp {
+impl ComponentLifecycle for VRLeaderElectionComp {
     fn on_start(&mut self) -> Handled {
-        debug!(self.ctx.log(), "Started BLE with params: current_ballot: {:?}, quick timeout: {}, hb_round: {}, leader: {:?}", self.current_ballot, self.quick_timeout, self.hb_round, self.leader);
         let bc = BufferConfig::default();
         self.ctx.init_buffers(Some(bc), None);
-        self.new_hb_round();
-        Handled::Ok
+        self.hb_timeout(Ballot::default())
     }
 
     fn on_kill(&mut self) -> Handled {
@@ -305,28 +201,28 @@ impl ComponentLifecycle for BallotLeaderComp {
     }
 }
 
-impl Provide<BallotLeaderElection> for BallotLeaderComp {
+impl Provide<BallotLeaderElection> for VRLeaderElectionComp {
     fn handle(&mut self, _: <BallotLeaderElection as Port>::Request) -> Handled {
         unimplemented!()
     }
 }
 
-impl Actor for BallotLeaderComp {
+impl Actor for VRLeaderElectionComp {
     type Message = Stop;
 
     fn receive_local(&mut self, stop: Stop) -> Handled {
         #[cfg(feature = "simulate_partition")]
-            {
-                self.disconnected_peers.clear();
-            }
+        {
+            self.disconnected_peers.clear();
+        }
         let pid = stop.0.request();
         self.stop_timer();
-        for peer in &self.peers {
+        for (_, peer) in self.views.iter().filter(|(pid, _)| pid != &self.pid) {
             peer.tell_serialised(NetStopMsg::Peer(*pid), self)
                 .expect("NetStopMsg should serialise!");
         }
         self.stopped = true;
-        if self.stopped_peers.len() == self.peers.len() {
+        if self.stopped_peers.len() == self.views.len() - 1 {
             stop.0.reply(()).expect("Failed to reply to stop ask!");
         } else {
             self.stop_ask = Some(stop.0);
@@ -343,11 +239,16 @@ impl Actor for BallotLeaderComp {
                         #[cfg(feature = "measure_io")] {
                             self.io_metadata.update_received(&req);
                         }
-                        let hb_reply = HeartbeatReply::with(req.round, self.current_ballot, self.candidate);
-                        #[cfg(feature = "measure_io")] {
-                            self.io_metadata.update_sent(&hb_reply);
+                        match self.viewchange_status {
+                            ViewChangeStatus::Elected(b) if b.pid == self.pid => {
+                                let hb_reply = HeartbeatReply::with(req.round, b, true);
+                                #[cfg(feature = "measure_io")] {
+                                    self.io_metadata.update_sent(&hb_reply);
+                                }
+                                sender.tell_serialised(HeartbeatMsg::Reply(hb_reply), self).expect("HBReply should serialise!");
+                            },
+                            _ => {}
                         }
-                        sender.tell_serialised(HeartbeatMsg::Reply(hb_reply), self).expect("HBReply should serialise!");
                     },
                     HeartbeatMsg::Reply(rep) if !self.stopped => {
                         #[cfg(feature = "simulate_partition")] {
@@ -358,21 +259,81 @@ impl Actor for BallotLeaderComp {
                         #[cfg(feature = "measure_io")] {
                             self.io_metadata.update_received(&rep);
                         }
-                        if rep.round == self.hb_round {
-                            self.ballots.push((rep.ballot, rep.candidate));
-                        } else {
-                            trace!(self.ctx.log(), "Got late hb reply. HB delay: {}", self.hb_delay);
-                            self.hb_delay += self.delta;
+                        match self.viewchange_status {
+                            ViewChangeStatus::Elected(b) if b == rep.ballot => {
+                                self.leader_is_alive = true;
+                            },
+                            _ => {}
                         }
                     },
                     _ => {},
+                }
+            },
+            msg(vr): VRMsg [using VRDeser] => {
+                match vr {
+                    VRMsg::StartViewChange(b) => {
+                        match self.viewchange_status {
+                            ViewChangeStatus::Elected(l) if b.n > l.n => {
+                                self.view_number = b.n;
+                                self.viewchange_status = ViewChangeStatus::ViewChange(b, 1);
+                                self.start_view_change(b);
+                            },
+                            ViewChangeStatus::Candidate(l, _) if b.n > l.n => {
+                                self.view_number = b.n;
+                                self.viewchange_status = ViewChangeStatus::ViewChange(b, 1);
+                                self.start_view_change(b);
+                            },
+                            ViewChangeStatus::ViewChange(l, counter) => {
+                                if b.n > l.n {
+                                    self.view_number = b.n;
+                                    self.viewchange_status = ViewChangeStatus::ViewChange(b, 1);
+                                    self.start_view_change(b);
+                                } else if b == l {
+                                    let new_counter = counter + 1;
+                                    if new_counter == self.majority {
+                                        if b.pid == self.pid {
+                                            self.viewchange_status = ViewChangeStatus::Candidate(b, 1);
+                                        } else {
+                                            let (_pid, leader_ap) = self.views.iter().find(|x| x.0 == b.pid).unwrap();
+                                            leader_ap.tell_serialised(VRMsg::DoViewChange(b), self)
+                                                .expect("VRMsg should serialise!");
+                                            self.viewchange_status = ViewChangeStatus::Elected(l);
+                                            self.stop_timer();
+                                            self.new_hb_round();
+                                        }
+                                    } else {
+                                        self.viewchange_status = ViewChangeStatus::ViewChange(b, new_counter);
+                                    }
+                                }
+                            }
+                            _ => {} // ignore viewchanges with smaller ballot
+                        };
+                    },
+                    VRMsg::DoViewChange(b) => {
+                        match self.viewchange_status {
+                            ViewChangeStatus::Candidate(l, counter) if l == b => {
+                                let new_counter = counter + 1;
+                                if new_counter == self.majority {
+                                    self.stop_timer();
+                                    self.ble_port.trigger(Leader::with(self.pid, l));
+                                    self.viewchange_status = ViewChangeStatus::Elected(l);
+                                    self.leader_is_alive = true;
+                                } else {
+                                    self.viewchange_status = ViewChangeStatus::Candidate(l, new_counter);
+                                }
+                            },
+                            _ => {
+                                warn!(self.ctx.log(), "Ignoring DoViewChange {:?}, status: {:?}", b, self.viewchange_status);
+                            }
+                        }
+                    }
                 }
             },
             msg(stop): NetStopMsg [using StopMsgDeser] => {
                 if let NetStopMsg::Peer(pid) = stop {
                     assert!(self.stopped_peers.insert(pid), "BLE got duplicate stop from peer {}", pid);
                     debug!(self.ctx.log(), "BLE got stopped from peer {}", pid);
-                    if self.stopped && self.stopped_peers.len() == self.peers.len() {
+                    if self.stopped && self.stopped_peers.len() == self.views.len() - 1 {
                         debug!(self.ctx.log(), "BLE got stopped from all peers");
                         self.stop_ask
                             .take()
@@ -389,4 +350,11 @@ impl Actor for BallotLeaderComp {
         }
         Handled::Ok
     }
+}
+
+#[derive(Clone, Copy, Debug)]
+enum ViewChangeStatus {
+    Elected(Ballot),
+    Candidate(Ballot, usize),
+    ViewChange(Ballot, usize),
 }

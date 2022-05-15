@@ -51,7 +51,7 @@ pub struct Communicator {
     atomic_broadcast_port: ProvidedPort<CommunicationPort>,
     pub(crate) peers: HashMap<u64, ActorPath>, // node id -> actorpath
     client: ActorPath,                         // cached client to send SequenceResp to
-   #[cfg(feature = "measure_io")]
+    #[cfg(feature = "measure_io")]
     io_metadata: IOMetaData,
     #[cfg(feature = "measure_io")]
     io_windows: Vec<(SystemTime, IOMetaData)>,
@@ -210,9 +210,9 @@ impl Provide<CommunicationPort> for Communicator {
             CommunicatorMsg::SendStop(my_pid, ack_client) => {
                 debug!(self.ctx.log(), "Sending stop to {:?}", self.peers.keys());
                 #[cfg(feature = "simulate_partition")]
-                    {
-                       self.disconnected_peers.clear();
-                    }
+                {
+                    self.disconnected_peers.clear();
+                }
                 for ap in self.peers.values() {
                     ap.tell_serialised(NetStopMsg::Peer(my_pid), self)
                         .expect("Should serialise StopMsg")

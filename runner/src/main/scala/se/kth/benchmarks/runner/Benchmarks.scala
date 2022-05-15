@@ -236,16 +236,17 @@ object Benchmarks extends ParameterDescriptionImplicits {
 
   /*** split into different parameter spaces as some parameters are dependent on each other ***/
   private val atomicBroadcastTestNodes = List(3);
-  private val atomicBroadcastTestProposals = List(1L.k);
+  private val atomicBroadcastTestProposals = List(10L.k);
   private val atomicBroadcastTestConcurrentProposals = List(200L);
 
   private val atomicBroadcastNodes = List(3);
   private val atomicBroadcastProposals = List(5L.mio);
   private val atomicBroadcastConcurrentProposals = List(500L);
 
-  private val algorithms = List("raft");
+  private val algorithms = List("vr");
   private val reconfig = List("single", "majority");
   private val reconfig_policy = List("replace-follower", "replace-leader");
+  private val network_scenarios = List("fully_connected", "quorum_loss", "constrained_election", "chained")
 
   private val atomicBroadcastNormalTestSpace = ParameterSpacePB // test space without reconfig
     .cross(
@@ -255,6 +256,7 @@ object Benchmarks extends ParameterDescriptionImplicits {
       atomicBroadcastTestConcurrentProposals,
       List("off"),
       List("none"),
+      List("fully_connected")
     );
 
   private val atomicBroadcastReconfigTestSpace = ParameterSpacePB // test space with reconfig
@@ -264,7 +266,8 @@ object Benchmarks extends ParameterDescriptionImplicits {
       atomicBroadcastTestProposals,
       atomicBroadcastTestConcurrentProposals,
       reconfig,
-      reconfig_policy
+      reconfig_policy,
+      network_scenarios
     );
 
   private val atomicBroadcastTestSpace = atomicBroadcastNormalTestSpace.append(atomicBroadcastReconfigTestSpace);
@@ -277,6 +280,7 @@ object Benchmarks extends ParameterDescriptionImplicits {
       atomicBroadcastConcurrentProposals,
       List("off"),
       List("none"),
+      network_scenarios
     );
 
   private val atomicBroadcastReconfigSpace = ParameterSpacePB
@@ -286,7 +290,8 @@ object Benchmarks extends ParameterDescriptionImplicits {
       atomicBroadcastProposals,
       atomicBroadcastConcurrentProposals,
       reconfig,
-      reconfig_policy
+      reconfig_policy,
+      network_scenarios
     );
 
   private val atomicBroadcastSpace = atomicBroadcastNormalSpace.append(atomicBroadcastReconfigSpace);
@@ -299,6 +304,7 @@ object Benchmarks extends ParameterDescriptionImplicits {
       List(1L),
       List("off"),
       List("none"),
+      network_scenarios
     );
 
   val atomicBroadcast = Benchmark(
@@ -309,7 +315,7 @@ object Benchmarks extends ParameterDescriptionImplicits {
     },
     space = atomicBroadcastNormalSpace
       .msg[AtomicBroadcastRequest] {
-        case (a, nn, np, cp, r, rp) =>
+        case (a, nn, np, cp, r, rp, ns) =>
           AtomicBroadcastRequest(
             algorithm = a,
             numberOfNodes = nn,
@@ -317,11 +323,12 @@ object Benchmarks extends ParameterDescriptionImplicits {
             concurrentProposals = cp,
             reconfiguration = r,
             reconfigPolicy = rp,
+            networkScenario = ns,
           )
       },
-    testSpace = atomicBroadcastTestSpace
+    testSpace = atomicBroadcastNormalTestSpace
       .msg[AtomicBroadcastRequest] {
-        case (a, nn, np, cp, r, rp) =>
+        case (a, nn, np, cp, r, rp, ns) =>
           AtomicBroadcastRequest(
             algorithm = a,
             numberOfNodes = nn,
@@ -329,6 +336,7 @@ object Benchmarks extends ParameterDescriptionImplicits {
             concurrentProposals = cp,
             reconfiguration = r,
             reconfigPolicy = rp,
+            networkScenario = ns,
           )
       }
   );

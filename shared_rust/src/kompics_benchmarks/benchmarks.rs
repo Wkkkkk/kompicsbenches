@@ -1596,6 +1596,7 @@ pub struct AtomicBroadcastRequest {
     pub concurrent_proposals: u64,
     pub reconfiguration: ::std::string::String,
     pub reconfig_policy: ::std::string::String,
+    pub network_scenario: ::std::string::String,
     // special fields
     pub unknown_fields: ::protobuf::UnknownFields,
     pub cached_size: ::protobuf::CachedSize,
@@ -1734,6 +1735,32 @@ impl AtomicBroadcastRequest {
     pub fn take_reconfig_policy(&mut self) -> ::std::string::String {
         ::std::mem::replace(&mut self.reconfig_policy, ::std::string::String::new())
     }
+
+    // string network_scenario = 7;
+
+
+    pub fn get_network_scenario(&self) -> &str {
+        &self.network_scenario
+    }
+    pub fn clear_network_scenario(&mut self) {
+        self.network_scenario.clear();
+    }
+
+    // Param is passed by value, moved
+    pub fn set_network_scenario(&mut self, v: ::std::string::String) {
+        self.network_scenario = v;
+    }
+
+    // Mutable pointer to the field.
+    // If field is not initialized, it is initialized with default value first.
+    pub fn mut_network_scenario(&mut self) -> &mut ::std::string::String {
+        &mut self.network_scenario
+    }
+
+    // Take field
+    pub fn take_network_scenario(&mut self) -> ::std::string::String {
+        ::std::mem::replace(&mut self.network_scenario, ::std::string::String::new())
+    }
 }
 
 impl ::protobuf::Message for AtomicBroadcastRequest {
@@ -1775,6 +1802,9 @@ impl ::protobuf::Message for AtomicBroadcastRequest {
                 6 => {
                     ::protobuf::rt::read_singular_proto3_string_into(wire_type, is, &mut self.reconfig_policy)?;
                 },
+                7 => {
+                    ::protobuf::rt::read_singular_proto3_string_into(wire_type, is, &mut self.network_scenario)?;
+                },
                 _ => {
                     ::protobuf::rt::read_unknown_or_skip_group(field_number, wire_type, is, self.mut_unknown_fields())?;
                 },
@@ -1805,6 +1835,9 @@ impl ::protobuf::Message for AtomicBroadcastRequest {
         if !self.reconfig_policy.is_empty() {
             my_size += ::protobuf::rt::string_size(6, &self.reconfig_policy);
         }
+        if !self.network_scenario.is_empty() {
+            my_size += ::protobuf::rt::string_size(7, &self.network_scenario);
+        }
         my_size += ::protobuf::rt::unknown_fields_size(self.get_unknown_fields());
         self.cached_size.set(my_size);
         my_size
@@ -1828,6 +1861,9 @@ impl ::protobuf::Message for AtomicBroadcastRequest {
         }
         if !self.reconfig_policy.is_empty() {
             os.write_string(6, &self.reconfig_policy)?;
+        }
+        if !self.network_scenario.is_empty() {
+            os.write_string(7, &self.network_scenario)?;
         }
         os.write_unknown_fields(self.get_unknown_fields())?;
         ::std::result::Result::Ok(())
@@ -1901,6 +1937,11 @@ impl ::protobuf::Message for AtomicBroadcastRequest {
                     |m: &AtomicBroadcastRequest| { &m.reconfig_policy },
                     |m: &mut AtomicBroadcastRequest| { &mut m.reconfig_policy },
                 ));
+                fields.push(::protobuf::reflect::accessor::make_simple_field_accessor::<_, ::protobuf::types::ProtobufTypeString>(
+                    "network_scenario",
+                    |m: &AtomicBroadcastRequest| { &m.network_scenario },
+                    |m: &mut AtomicBroadcastRequest| { &mut m.network_scenario },
+                ));
                 ::protobuf::reflect::MessageDescriptor::new::<AtomicBroadcastRequest>(
                     "AtomicBroadcastRequest",
                     fields,
@@ -1929,6 +1970,7 @@ impl ::protobuf::Clear for AtomicBroadcastRequest {
         self.concurrent_proposals = 0;
         self.reconfiguration.clear();
         self.reconfig_policy.clear();
+        self.network_scenario.clear();
         self.unknown_fields.clear();
     }
 }
@@ -1966,26 +2008,27 @@ static file_descriptor_proto_data: &'static [u8] = b"\
     equest\x12.\n\x13number_of_chameneos\x18\x01\x20\x01(\rR\x11numberOfCham\
     eneos\x12,\n\x12number_of_meetings\x18\x02\x20\x01(\x04R\x10numberOfMeet\
     ings\"T\n\x0bAPSPRequest\x12&\n\x0fnumber_of_nodes\x18\x01\x20\x01(\rR\r\
-    numberOfNodes\x12\x1d\n\nblock_size\x18\x02\x20\x01(\rR\tblockSize\"\x94\
+    numberOfNodes\x12\x1d\n\nblock_size\x18\x02\x20\x01(\rR\tblockSize\"\xbf\
     \x02\n\x16AtomicBroadcastRequest\x12\x1c\n\talgorithm\x18\x01\x20\x01(\t\
     R\talgorithm\x12&\n\x0fnumber_of_nodes\x18\x02\x20\x01(\x04R\rnumberOfNo\
     des\x12.\n\x13number_of_proposals\x18\x03\x20\x01(\x04R\x11numberOfPropo\
     sals\x121\n\x14concurrent_proposals\x18\x04\x20\x01(\x04R\x13concurrentP\
     roposals\x12(\n\x0freconfiguration\x18\x05\x20\x01(\tR\x0freconfiguratio\
-    n\x12'\n\x0freconfig_policy\x18\x06\x20\x01(\tR\x0ereconfigPolicy2\xbf\
-    \x08\n\x0fBenchmarkRunner\x12L\n\x05Ready\x12\x20.kompics.benchmarks.Rea\
-    dyRequest\x1a!.kompics.benchmarks.ReadyResponse\x12P\n\x08Shutdown\x12#.\
-    kompics.benchmarks.ShutdownRequest\x1a\x1f.kompics.benchmarks.ShutdownAc\
-    k\x12O\n\x08PingPong\x12#.kompics.benchmarks.PingPongRequest\x1a\x1e.kom\
-    pics.benchmarks.TestResult\x12R\n\x0bNetPingPong\x12#.kompics.benchmarks\
-    .PingPongRequest\x1a\x1e.kompics.benchmarks.TestResult\x12c\n\x12Through\
-    putPingPong\x12-.kompics.benchmarks.ThroughputPingPongRequest\x1a\x1e.ko\
-    mpics.benchmarks.TestResult\x12f\n\x15NetThroughputPingPong\x12-.kompics\
-    .benchmarks.ThroughputPingPongRequest\x1a\x1e.kompics.benchmarks.TestRes\
-    ult\x12[\n\x0eAtomicRegister\x12).kompics.benchmarks.AtomicRegisterReque\
-    st\x1a\x1e.kompics.benchmarks.TestResult\x12_\n\x10StreamingWindows\x12+\
-    .kompics.benchmarks.StreamingWindowsRequest\x1a\x1e.kompics.benchmarks.T\
-    estResult\x12Q\n\tFibonacci\x12$.kompics.benchmarks.FibonacciRequest\x1a\
+    n\x12'\n\x0freconfig_policy\x18\x06\x20\x01(\tR\x0ereconfigPolicy\x12)\n\
+    \x10network_scenario\x18\x07\x20\x01(\tR\x0fnetworkScenario2\xbf\x08\n\
+    \x0fBenchmarkRunner\x12L\n\x05Ready\x12\x20.kompics.benchmarks.ReadyRequ\
+    est\x1a!.kompics.benchmarks.ReadyResponse\x12P\n\x08Shutdown\x12#.kompic\
+    s.benchmarks.ShutdownRequest\x1a\x1f.kompics.benchmarks.ShutdownAck\x12O\
+    \n\x08PingPong\x12#.kompics.benchmarks.PingPongRequest\x1a\x1e.kompics.b\
+    enchmarks.TestResult\x12R\n\x0bNetPingPong\x12#.kompics.benchmarks.PingP\
+    ongRequest\x1a\x1e.kompics.benchmarks.TestResult\x12c\n\x12ThroughputPin\
+    gPong\x12-.kompics.benchmarks.ThroughputPingPongRequest\x1a\x1e.kompics.\
+    benchmarks.TestResult\x12f\n\x15NetThroughputPingPong\x12-.kompics.bench\
+    marks.ThroughputPingPongRequest\x1a\x1e.kompics.benchmarks.TestResult\
+    \x12[\n\x0eAtomicRegister\x12).kompics.benchmarks.AtomicRegisterRequest\
+    \x1a\x1e.kompics.benchmarks.TestResult\x12_\n\x10StreamingWindows\x12+.k\
+    ompics.benchmarks.StreamingWindowsRequest\x1a\x1e.kompics.benchmarks.Tes\
+    tResult\x12Q\n\tFibonacci\x12$.kompics.benchmarks.FibonacciRequest\x1a\
     \x1e.kompics.benchmarks.TestResult\x12Q\n\tChameneos\x12$.kompics.benchm\
     arks.ChameneosRequest\x1a\x1e.kompics.benchmarks.TestResult\x12W\n\x14Al\
     lPairsShortestPath\x12\x1f.kompics.benchmarks.APSPRequest\x1a\x1e.kompic\

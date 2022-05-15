@@ -64,4 +64,5 @@ message AtomicBroadcastRequest {
 	uint64 concurrent_proposals = 4;
 	string reconfiguration = 5;
 	string reconfig_policy = 6;
+	string network_scenario = 7;
 }

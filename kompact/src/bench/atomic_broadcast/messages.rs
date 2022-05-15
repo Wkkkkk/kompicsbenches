@@ -713,6 +713,76 @@ pub mod paxos {
             }
         }
     }
+
+    pub mod vr_leader_election {
+        use super::super::*;
+        use crate::bench::atomic_broadcast::ble::Ballot;
+
+        #[derive(Clone, Debug)]
+        pub enum VRMsg {
+            StartViewChange(Ballot),
+            DoViewChange(Ballot),
+        }
+
+        pub struct VRDeser;
+
+        const START_VIEWCHANGE_ID: u8 = 1;
+        const DO_VIEWCHANGE_ID: u8 = 2;
+
+        impl Serialisable for VRMsg {
+            fn ser_id(&self) -> SerId {
+                serialiser_ids::VR_ID
+            }
+
+            fn size_hint(&self) -> Option<usize> {
+                Some(55)
+            }
+
+            fn serialise(&self, buf: &mut dyn BufMut) -> Result<(), SerError> {
+                match self {
+                    VRMsg::StartViewChange(b) => {
+                        buf.put_u8(START_VIEWCHANGE_ID);
+                        buf.put_u32(b.n);
+                        buf.put_u64(b.pid);
+                    }
+                    VRMsg::DoViewChange(b) => {
+                        buf.put_u8(DO_VIEWCHANGE_ID);
+                        buf.put_u32(b.n);
+                        buf.put_u64(b.pid);
+                    }
+                }
+                Ok(())
+            }
+
+            fn local(self: Box<Self>) -> Result<Box<dyn Any + Send>, Box<dyn Serialisable>> {
+                Ok(self)
+            }
+        }
+
+        impl Deserialiser<VRMsg> for VRDeser {
+            const SER_ID: u64 = serialiser_ids::VR_ID;
+
+            fn deserialise(buf: &mut dyn Buf) -> Result<VRMsg, SerError> {
+                match buf.get_u8() {
+                    START_VIEWCHANGE_ID => {
+                        let n = buf.get_u32();
+                        let pid = buf.get_u64();
+                        let b = Ballot::with(n, pid);
+                        Ok(VRMsg::StartViewChange(b))
+                    }
+                    DO_VIEWCHANGE_ID => {
+                        let n = buf.get_u32();
+                        let pid = buf.get_u64();
+                        let b = Ballot::with(n, pid);
+                        Ok(VRMsg::DoViewChange(b))
+                    }
+                    _ => Err(SerError::InvalidType(
+                        "Found unkown id but expected VRMsg".into(),
+                    )),
+                }
+            }
+        }
+    }
 }
 
 /*** Shared Messages***/

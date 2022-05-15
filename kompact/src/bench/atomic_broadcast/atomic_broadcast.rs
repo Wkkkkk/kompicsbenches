@@ -28,11 +28,12 @@ use std::{
 };
 use tikv_raft::storage::MemStorage;
 
+use crate::bench::atomic_broadcast::paxos::LeaderElection;
+use chrono::{DateTime, Utc};
 use quanta::Instant;
 #[cfg(feature = "measure_io")]
 use std::fs::File;
 use std::time::SystemTime;
-use chrono::{DateTime, Utc};
 
 const TCP_NODELAY: bool = true;
 pub const CONFIG_PATH: &str = "./configs/atomic_broadcast.conf";
@@ -198,12 +199,22 @@ pub enum ReconfigurationPolicy {
     ReplaceFollower,
 }
 
+#[derive(Copy, Clone, Debug)]
+pub enum NetworkScenario {
+    FullyConnected,
+    QuorumLoss,
+    ConstrainedElection,
+    Chained,
+    PeriodicFull,
+}
+
 pub struct AtomicBroadcastMaster {
     num_nodes: Option<u64>,
     num_nodes_needed: Option<u64>,
     num_proposals: Option<u64>,
     concurrent_proposals: Option<u64>,
     reconfiguration: Option<(ReconfigurationPolicy, Vec<u64>)>,
+    network_scenario: Option<NetworkScenario>,
     system: Option<KompactSystem>,
     finished_latch: Option<Arc<CountdownEvent>>,
     iteration_id: u32,
@@ -225,6 +236,7 @@ impl AtomicBroadcastMaster {
             num_proposals: None,
             concurrent_proposals: None,
             reconfiguration: None,
+            network_scenario: None,
             system: None,
             finished_latch: None,
             iteration_id: 0,
@@ -281,6 +293,7 @@ impl AtomicBroadcastMaster {
     fn create_client(
         &self,
         nodes_id: HashMap<u64, ActorPath>,
+        network_scenario: NetworkScenario,
         client_timeout: Duration,
         preloaded_log_size: u64,
         leader_election_latch: Arc<CountdownEvent>,
@@ -296,6 +309,7 @@ impl AtomicBroadcastMaster {
                 self.num_proposals.unwrap(),
                 self.concurrent_proposals.unwrap(),
                 nodes_id,
+                network_scenario,
                 reconfig,
                 client_timeout,
                 preloaded_log_size,
@@ -332,7 +346,7 @@ impl AtomicBroadcastMaster {
             )));
         }
         match &c.algorithm.to_lowercase() {
-            a if a != "paxos" && a != "raft" => {
+            a if a != "paxos" && a != "raft" && a != "vr" && a != "multi-paxos" => {
                 return Err(BenchmarkError::InvalidTest(format!(
                     "Unimplemented atomic broadcast algorithm: {}",
                     &c.algorithm
@@ -387,6 +401,22 @@ impl AtomicBroadcastMaster {
                 )));
             }
         }
+        let network_scenario = match c.network_scenario.to_lowercase().as_str() {
+            "fully_connected" => NetworkScenario::FullyConnected,
+            "quorum_loss" if c.number_of_nodes >= 5 => NetworkScenario::QuorumLoss,
+            "constrained_election" if c.number_of_nodes >= 5 => {
+                NetworkScenario::ConstrainedElection
+            }
+            "chained" if c.number_of_nodes == 3 => NetworkScenario::Chained,
+            "periodic_full" => NetworkScenario::PeriodicFull,
+            _ => {
+                return Err(BenchmarkError::InvalidTest(format!(
+                    "Unimplemented network scenario for {} nodes: {}",
+                    c.number_of_nodes, &c.network_scenario
+                )));
+            }
+        };
+        self.network_scenario = Some(network_scenario);
         Ok(())
     }
 
@@ -715,6 +745,7 @@ impl DistributedBenchmarkMaster for AtomicBroadcastMaster {
         let leader_election_latch = Arc::new(CountdownEvent::new(1));
         let (client_comp, client_path) = self.create_client(
             nodes_id,
+            self.network_scenario.expect("No network scenario"),
             client_timeout,
             preloaded_log_size,
             leader_election_latch.clone(),
@@ -834,9 +865,19 @@ impl DistributedBenchmarkClient for AtomicBroadcastClient {
             ExperimentParams::load_from_file(CONFIG_PATH, meta_subdir, c.experiment_str);
         let initial_config: Vec<u64> = (1..=params.num_nodes).collect();
         let named_path = match params.algorithm.as_ref() {
-            "paxos" => {
+            a if a == "paxos" || a == "vr" || a == "multi-paxos" => {
+                let leader_election = match a {
+                    "vr" => LeaderElection::VR,
+                    "multi-paxos" => todo!(),
+                    _ => LeaderElection::BLE,
+                };
                 let (paxos_comp, unique_reg_f) = system.create_and_register(|| {
-                    PaxosComp::with(initial_config, params.is_reconfig_exp, experiment_params)
+                    PaxosComp::with(
+                        initial_config,
+                        params.is_reconfig_exp,
+                        experiment_params,
+                        leader_election,
+                    )
                 });
                 unique_reg_f.wait_expect(REGISTER_TIMEOUT, "ReplicaComp failed to register!");
                 let self_path = system
@@ -946,19 +987,20 @@ pub struct Done;
 
 fn create_experiment_str(c: &AtomicBroadcastRequest) -> String {
     format!(
-        "{},{},{},{},{},{}",
+        "{},{},{},{},{},{},{}",
         c.algorithm,
         c.number_of_nodes,
         c.concurrent_proposals,
         c.number_of_proposals,
         c.reconfiguration.clone(),
-        c.reconfig_policy
+        c.reconfig_policy,
+        c.network_scenario,
     )
 }
 
 fn get_deser_clientparams_and_subdir(s: &str) -> (ClientParamsDeser, String) {
     let split: Vec<_> = s.split(',').collect();
-    assert_eq!(split.len(), 6);
+    assert_eq!(split.len(), 7);
     let algorithm = split[0].to_lowercase();
     let num_nodes = split[1]
         .parse::<u64>()
@@ -984,9 +1026,7 @@ fn create_metaresults_sub_dir(
 ) -> String {
     format!(
         "{}-{}-{}",
-        number_of_nodes,
-        concurrent_proposals,
-        reconfiguration
+        number_of_nodes, concurrent_proposals, reconfiguration
     )
 }
 

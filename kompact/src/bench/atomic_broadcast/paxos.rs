@@ -31,9 +31,9 @@ use crate::bench::atomic_broadcast::client::create_raw_proposal;
 #[cfg(feature = "measure_io")]
 use crate::bench::atomic_broadcast::{util::exp_params::*, util::io_metadata::IOMetaData};
 #[cfg(feature = "measure_io")]
-use std::time::SystemTime;
-#[cfg(feature = "measure_io")]
 use chrono::{DateTime, Utc};
+#[cfg(feature = "measure_io")]
+use std::time::SystemTime;
 
 #[cfg(feature = "periodic_replica_logging")]
 use crate::bench::atomic_broadcast::util::exp_params::WINDOW_DURATION;
@@ -42,6 +42,7 @@ use std::io::Write;
 
 #[cfg(feature = "simulate_partition")]
 use crate::bench::atomic_broadcast::messages::{PartitioningExpMsg, PartitioningExpMsgDeser};
+use crate::bench::atomic_broadcast::vr_le::VRLeaderElectionComp;
 #[cfg(feature = "simulate_partition")]
 use crate::bench::serialiser_ids::PARTITIONING_EXP_ID;
 
@@ -113,6 +114,18 @@ struct HoldBackProposals {
     pub serialised: Vec<NetMessage>,
 }
 
+#[derive(Clone)]
+pub enum LeaderElectionComp {
+    BLE(Arc<Component<BallotLeaderComp>>),
+    VR(Arc<Component<VRLeaderElectionComp>>),
+    // MultiPaxos
+}
+
+pub enum LeaderElection {
+    BLE,
+    VR,
+}
+
 impl HoldBackProposals {
     fn is_empty(&self) -> bool {
         self.serialised.is_empty() && self.deserialised.is_empty()
@@ -134,8 +147,9 @@ where
     pid: u64,
     initial_configuration: Vec<u64>,
     is_reconfig_exp: bool,
+    leader_election: LeaderElection,
     paxos_replicas: Vec<Arc<Component<PaxosReplica<S, P>>>>,
-    ble_comps: Vec<Arc<Component<BallotLeaderComp>>>,
+    le_comps: Vec<LeaderElectionComp>,
     communicator_comps: Vec<Arc<Component<Communicator>>>,
     active_config: ConfigMeta,
     nodes: Vec<ActorPath>, // derive actorpaths of peers' ble and paxos replicas from these
@@ -159,7 +173,7 @@ where
     #[cfg(feature = "measure_io")]
     io_windows: Vec<(SystemTime, IOMetaData)>,
     #[cfg(feature = "simulate_partition")]
-    disconnected_peers: Vec<u64>
+    disconnected_peers: Vec<u64>,
 }
 
 impl<S, P> PaxosComp<S, P>
@@ -171,14 +185,16 @@ where
         initial_configuration: Vec<u64>,
         is_reconfig_exp: bool,
         experiment_params: ExperimentParams,
+        leader_election: LeaderElection,
     ) -> PaxosComp<S, P> {
         PaxosComp {
             ctx: ComponentContext::uninitialised(),
             pid: 0,
             initial_configuration,
             is_reconfig_exp,
+            leader_election,
             paxos_replicas: vec![],
-            ble_comps: vec![],
+            le_comps: vec![],
             communicator_comps: vec![],
             active_config: ConfigMeta::new(0),
             nodes: vec![],
@@ -202,7 +218,7 @@ where
             #[cfg(feature = "measure_io")]
             io_windows: vec![],
             #[cfg(feature = "simulate_partition")]
-            disconnected_peers: vec![]
+            disconnected_peers: vec![],
         }
     }
 
@@ -211,6 +227,24 @@ where
         self.nodes
             .get(idx)
             .unwrap_or_else(|| panic!("Could not get actorpath of pid: {}", pid))
+    }
+
+    fn derive_ble_actorpath(&self, pid: u64, config_id: ConfigId) -> ActorPath {
+        let actorpath = self.get_actorpath(pid);
+        let sys_path = actorpath.system();
+        let protocol = sys_path.protocol();
+        let port = sys_path.port();
+        let addr = sys_path.address();
+        let named_ble = NamedPath::new(
+            protocol,
+            *addr,
+            port,
+            vec![format!(
+                "{}{},{}-{}",
+                BLE, pid, config_id, self.iteration_id
+            )],
+        );
+        ActorPath::Named(named_ble)
     }
 
     fn derive_actorpaths(
@@ -299,17 +333,12 @@ where
         ble_quick_start: bool,
         skip_prepare_n: Option<Leader<Ballot>>,
     ) -> Vec<KFuture<RegistrationResult>> {
-        let peers = match initial_nodes {
-            Some(nodes) => {
-                let peers: Vec<u64> = nodes
-                    .iter()
-                    .filter(|pid| pid != &&self.pid)
-                    .copied()
-                    .collect();
-                peers
-            }
-            _ => vec![],
-        };
+        let nodes = initial_nodes.unwrap_or(vec![]);
+        let peers: Vec<u64> = nodes
+            .iter()
+            .filter(|pid| pid != &&self.pid)
+            .copied()
+            .collect();
         let (ble_peers, communicator_peers) = self.derive_actorpaths(config_id, &peers);
         let raw_paxos_peers = if peers.is_empty() { None } else { Some(peers) };
         let raw_paxos = self.create_raw_paxos(config_id, raw_paxos_peers.clone(), skip_prepare_n);
@@ -341,36 +370,60 @@ where
             .as_i64()
             .expect("Failed to load get_decided_period");
         let initial_election_factor = self.experiment_params.initial_election_factor;
-        let (ble_comp, ble_f) = system.create_and_register(|| {
-            BallotLeaderComp::with(
-                ble_peers,
-                self.pid,
-                election_timeout as u64,
-                ble_delta as u64,
-                ble_quick_start,
-                skip_prepare_n,
-                initial_election_factor,
-            )
-        });
+
+        let ble_alias = format!("{}{},{}-{}", BLE, self.pid, config_id, self.iteration_id);
+        let (le_comp, le_f, le_alias_f) = match self.leader_election {
+            LeaderElection::BLE => {
+                let (ble, ble_f) = system.create_and_register(|| {
+                    BallotLeaderComp::with(
+                        ble_peers,
+                        self.pid,
+                        election_timeout as u64,
+                        ble_delta as u64,
+                        ble_quick_start,
+                        skip_prepare_n,
+                        initial_election_factor,
+                    )
+                });
+                let ble_alias_f = system.register_by_alias(&ble, ble_alias);
+                biconnect_components::<BallotLeaderElection, _, _>(&ble, &paxos)
+                    .expect("Could not connect BLE and PaxosComp!");
+                (LeaderElectionComp::BLE(ble), ble_f, ble_alias_f)
+            }
+            LeaderElection::VR => {
+                let views: Vec<(u64, ActorPath)> = nodes
+                    .iter()
+                    .map(|pid| (*pid, self.derive_ble_actorpath(*pid, config_id)))
+                    .collect();
+                let (vr, vr_f) = system.create_and_register(|| {
+                    VRLeaderElectionComp::with(
+                        views,
+                        self.pid,
+                        election_timeout as u64,
+                        ble_quick_start,
+                        initial_election_factor,
+                    )
+                });
+                let vr_alias_f = system.register_by_alias(&vr, ble_alias);
+                biconnect_components::<BallotLeaderElection, _, _>(&vr, &paxos)
+                    .expect("Could not connect VR and PaxosComp!");
+                (LeaderElectionComp::VR(vr), vr_f, vr_alias_f)
+            }
+        };
         let communicator_alias = format!(
             "{}{},{}-{}",
             COMMUNICATOR, self.pid, config_id, self.iteration_id
         );
-        let ble_alias = format!("{}{},{}-{}", BLE, self.pid, config_id, self.iteration_id);
         let comm_alias_f = system.register_by_alias(&communicator, communicator_alias);
-        let ble_alias_f = system.register_by_alias(&ble_comp, ble_alias);
         /*** connect components ***/
         biconnect_components::<CommunicationPort, _, _>(&communicator, &paxos)
             .expect("Could not connect Communicator and PaxosComp!");
 
-        biconnect_components::<BallotLeaderElection, _, _>(&ble_comp, &paxos)
-            .expect("Could not connect BLE and PaxosComp!");
-
         self.paxos_replicas.push(paxos);
-        self.ble_comps.push(ble_comp);
+        self.le_comps.push(le_comp);
         self.communicator_comps.push(communicator);
 
-        vec![paxos_f, ble_f, comm_f, comm_alias_f, ble_alias_f]
+        vec![paxos_f, le_f, comm_f, comm_alias_f, le_alias_f]
     }
 
     fn set_initial_replica_state_after_reconfig(
@@ -403,17 +456,23 @@ where
                 skip_prepare_use_leader,
             );
         });
-        let ble = self
-            .ble_comps
+        let le = self
+            .le_comps
             .get(idx)
             .unwrap_or_else(|| panic!("Could not find BLE config_id: {}", config_id));
-        ble.on_definition(|ble| {
-            ble.majority = ble_peers.len() / 2 + 1;
-            ble.peers = ble_peers;
-            if let Some(n) = skip_prepare_use_leader {
-                ble.set_initial_leader(n);
+        match le {
+            LeaderElectionComp::BLE(ble) => {
+                ble.on_definition(|ble| {
+                    ble.majority = ble_peers.len() / 2 + 1;
+                    ble.peers = ble_peers;
+                    if let Some(n) = skip_prepare_use_leader {
+                        ble.set_initial_leader(n);
+                    }
+                });
             }
-        });
+            _ => unimplemented!(),
+        }
+
         let communicator = self
             .communicator_comps
             .get(idx)
@@ -432,24 +491,33 @@ where
                 self.paxos_replicas.len()
             )
         });
-        self.active_config = ConfigMeta::new(config_id);
-        let ble = self
-            .ble_comps
+        let le = self
+            .le_comps
             .get(idx)
             .unwrap_or_else(|| panic!("Could not find BLE config_id: {}", config_id));
         let communicator = self
             .communicator_comps
             .get(idx)
             .unwrap_or_else(|| panic!("Could not find Communicator with config_id: {}", config_id));
+        self.ctx.system().start(paxos);
+        self.ctx.system().start(communicator);
+        let le_id = match le {
+            LeaderElectionComp::BLE(ble) => {
+                self.ctx.system().start(ble);
+                ble.id()
+            }
+            LeaderElectionComp::VR(vr) => {
+                self.ctx.system().start(vr);
+                vr.id()
+            }
+        };
+        self.active_config = ConfigMeta::new(config_id);
+        self.next_config_id = None;
         info!(
             self.ctx.log(),
-            "Starting replica pid: {}, config_id: {}. PaxosReplica: {:?}, Communicator: {:?}, BLE: {:?}",
-            self.pid, config_id, paxos.id(), communicator.id(), ble.id()
+            "Starting replica pid: {}, config_id: {}. PaxosReplica: {:?}, Communicator: {:?}, LE: {:?}",
+            self.pid, config_id, paxos.id(), communicator.id(), le_id
         );
-        self.ctx.system().start(paxos);
-        self.ctx.system().start(ble);
-        self.ctx.system().start(communicator);
-        self.next_config_id = None;
     }
 
     #[cfg(feature = "measure_io")]
@@ -472,7 +540,11 @@ where
                 .io_windows
                 .iter()
                 .fold(IOMetaData::default(), |sum, (ts, io_meta)| {
-                    str.push_str(&format!("{:?}, {:?}\n", DateTime::<Utc>::from(*ts), io_meta));
+                    str.push_str(&format!(
+                        "{:?}, {:?}\n",
+                        DateTime::<Utc>::from(*ts),
+                        io_meta
+                    ));
                     sum + (*io_meta)
                 });
             writeln!(file, "Total PaxosComp IO: {:?}\n{}", total, str)
@@ -484,7 +556,11 @@ where
             let total = io_windows
                 .iter()
                 .fold(IOMetaData::default(), |sum, (ts, io_meta)| {
-                    str.push_str(&format!("{:?}, {:?}\n", DateTime::<Utc>::from(*ts), io_meta));
+                    str.push_str(&format!(
+                        "{:?}, {:?}\n",
+                        DateTime::<Utc>::from(*ts),
+                        io_meta
+                    ));
                     sum + *io_meta
                 });
             writeln!(
@@ -496,7 +572,7 @@ where
             )
             .expect("Failed to write IO results file");
         }
-        for ble in &self.ble_comps {
+        for ble in &self.le_comps {
             let io = ble.on_definition(|c| c.get_io_metadata());
             writeln!(
                 file,
@@ -518,7 +594,7 @@ where
         let num_configs = self.paxos_replicas.len() as u32;
         let stopping_before_started = self.active_config.id < num_configs;
         let num_comps =
-            self.ble_comps.len() + self.paxos_replicas.len() + self.communicator_comps.len();
+            self.le_comps.len() + self.paxos_replicas.len() + self.communicator_comps.len();
         assert!(
             num_comps > 0,
             "Should not get client stop if no child components"
@@ -531,15 +607,16 @@ where
             self.next_config_id,
             stopping_before_started
         );
-        let (ble_last, rest_ble) = self.ble_comps.split_last().expect("No ble comps!");
-        for ble in rest_ble {
-            stop_futures.push(ble.actor_ref().ask_with(|p| BLEStop(Ask::new(p, self.pid))));
+        for le in &self.le_comps {
+            match le {
+                LeaderElectionComp::BLE(ble) => {
+                    stop_futures.push(ble.actor_ref().ask_with(|p| BLEStop(Ask::new(p, self.pid))));
+                }
+                LeaderElectionComp::VR(vr) => {
+                    stop_futures.push(vr.actor_ref().ask_with(|p| BLEStop(Ask::new(p, self.pid))));
+                }
+            }
         }
-        stop_futures.push(
-            ble_last
-                .actor_ref()
-                .ask_with(|p| BLEStop(Ask::new(p, self.pid))),
-        );
         let (paxos_last, rest) = self
             .paxos_replicas
             .split_last()
@@ -577,9 +654,17 @@ where
     fn kill_components(&mut self, ask: Ask<(), Done>) -> Handled {
         let system = self.ctx.system();
         let mut kill_futures = vec![];
-        for ble in self.ble_comps.drain(..) {
-            let ble_f = system.kill_notify(ble);
-            kill_futures.push(ble_f);
+        for le in self.le_comps.drain(..) {
+            match le {
+                LeaderElectionComp::BLE(ble) => {
+                    let ble_f = system.kill_notify(ble);
+                    kill_futures.push(ble_f);
+                }
+                LeaderElectionComp::VR(vr) => {
+                    let vr_f = system.kill_notify(vr);
+                    kill_futures.push(vr_f);
+                }
+            }
         }
         for paxos in self.paxos_replicas.drain(..) {
             let paxos_f = system.kill_notify(paxos);
@@ -939,7 +1024,7 @@ where
         self.removed = false;
 
         self.paxos_replicas.clear();
-        self.ble_comps.clear();
+        self.le_comps.clear();
         self.communicator_comps.clear();
         #[cfg(feature = "measure_io")]
         {
@@ -1166,8 +1251,15 @@ where
                                 for communicator in &self.communicator_comps {
                                     communicator.on_definition(|c| c.disconnect_peers(peers.clone(), lagging_peer.clone()));
                                 }
-                                for ble in &self.ble_comps {
-                                    ble.on_definition(|ble| ble.disconnect_peers(peers.clone(), lagging_peer.clone()));
+                                for le in &self.le_comps {
+                                    match le {
+                                        LeaderElectionComp::BLE(ble) => {
+                                            ble.on_definition(|ble| ble.disconnect_peers(peers.clone(), lagging_peer.clone()));
+                                        }
+                                        LeaderElectionComp:: VR(vr) => {
+                                            vr.on_definition(|vr| vr.disconnect_peers(peers.clone(), lagging_peer.clone()));
+                                        }
+                                    }
                                 }
                                 self.disconnected_peers = peers;
                                 if let Some(lagging) = lagging_peer {
@@ -1185,8 +1277,15 @@ where
                                 for communicator in &self.communicator_comps {
                                     communicator.on_definition(|c| c.recover_peers());
                                 }
-                                for ble in &self.ble_comps {
-                                    ble.on_definition(|ble| ble.recover_peers());
+                                for le in &self.le_comps {
+                                    match le {
+                                        LeaderElectionComp::BLE(ble) => {
+                                            ble.on_definition(|ble| ble.recover_peers());
+                                        }
+                                        LeaderElectionComp:: VR(vr) => {
+                                            vr.on_definition(|vr| vr.recover_peers());
+                                        }
+                                    }
                                 }
                                 self.disconnected_peers.clear();
                             }
