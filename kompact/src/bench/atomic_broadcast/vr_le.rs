@@ -22,6 +22,7 @@ pub struct VRLeaderElectionComp {
     hb_round: u32,
     leader_is_alive: bool,
     viewchange_status: ViewChangeStatus,
+    latest_ballot_as_leader: Ballot,
     hb_delay: u64,
     pub majority: usize,
     timer: Option<ScheduledTimer>,
@@ -55,6 +56,7 @@ impl VRLeaderElectionComp {
             hb_round: 0,
             leader_is_alive: false,
             viewchange_status: ViewChangeStatus::Elected(Ballot::default()),
+            latest_ballot_as_leader: Default::default(),
             hb_delay,
             timer: None,
             stopped: false,
@@ -119,7 +121,7 @@ impl VRLeaderElectionComp {
                         let b = self.get_next_view();
                         self.viewchange_status = ViewChangeStatus::ViewChange(b, 1);
                         for (_, peer) in self.views.iter().filter(|x| x.0 != self.pid) {
-                            peer.tell_serialised(VRMsg::StartViewChange(b), self)
+                            peer.tell_serialised(VRMsg::StartViewChange(b, self.pid), self)
                                 .expect("HBRequest should serialise!");
                         }
                     }
@@ -141,7 +143,7 @@ impl VRLeaderElectionComp {
 
     fn start_view_change(&self, b: Ballot) {
         for (_, peer) in self.views.iter().filter(|x| x.0 != self.pid) {
-            peer.tell_serialised(VRMsg::StartViewChange(b), self)
+            peer.tell_serialised(VRMsg::StartViewChange(b, self.pid), self)
                 .expect("VRMsg should serialise!");
         }
     }
@@ -190,6 +192,7 @@ impl VRLeaderElectionComp {
 
 impl ComponentLifecycle for VRLeaderElectionComp {
     fn on_start(&mut self) -> Handled {
+        info!(self.ctx.log(), "Starting with views: {:?}", self.views);
         let bc = BufferConfig::default();
         self.ctx.init_buffers(Some(bc), None);
         self.hb_timeout(Ballot::default())
@@ -239,6 +242,7 @@ impl Actor for VRLeaderElectionComp {
                         #[cfg(feature = "measure_io")] {
                             self.io_metadata.update_received(&req);
                         }
+                        /*
                         match self.viewchange_status {
                             ViewChangeStatus::Elected(b) if b.pid == self.pid => {
                                 let hb_reply = HeartbeatReply::with(req.round, b, true);
@@ -248,7 +252,9 @@ impl Actor for VRLeaderElectionComp {
                                 sender.tell_serialised(HeartbeatMsg::Reply(hb_reply), self).expect("HBReply should serialise!");
                             },
                             _ => {}
-                        }
+                        }*/
+                        let hb_reply = HeartbeatReply::with(req.round, self.latest_ballot_as_leader, true);
+                        sender.tell_serialised(HeartbeatMsg::Reply(hb_reply), self).expect("HBReply should serialise!");
                     },
                     HeartbeatMsg::Reply(rep) if !self.stopped => {
                         #[cfg(feature = "simulate_partition")] {
@@ -271,7 +277,12 @@ impl Actor for VRLeaderElectionComp {
             },
             msg(vr): VRMsg [using VRDeser] => {
                 match vr {
-                    VRMsg::StartViewChange(b) => {
+                    VRMsg::StartViewChange(b, from) => {
+                        #[cfg(feature = "simulate_partition")] {
+                            if self.disconnected_peers.contains(&from) {
+                                return Handled::Ok;
+                            }
+                        }
                         match self.viewchange_status {
                             ViewChangeStatus::Elected(l) if b.n > l.n => {
                                 self.view_number = b.n;
@@ -295,9 +306,10 @@ impl Actor for VRLeaderElectionComp {
                                             self.viewchange_status = ViewChangeStatus::Candidate(b, 1);
                                         } else {
                                             let (_pid, leader_ap) = self.views.iter().find(|x| x.0 == b.pid).unwrap();
-                                            leader_ap.tell_serialised(VRMsg::DoViewChange(b), self)
+                                            leader_ap.tell_serialised(VRMsg::DoViewChange(b, self.pid), self)
                                                 .expect("VRMsg should serialise!");
                                             self.viewchange_status = ViewChangeStatus::Elected(l);
+                                            self.quick_timeout = false;
                                             self.stop_timer();
                                             self.new_hb_round();
                                         }
@@ -309,7 +321,12 @@ impl Actor for VRLeaderElectionComp {
                             _ => {} // ignore viewchanges with smaller ballot
                         };
                     },
-                    VRMsg::DoViewChange(b) => {
+                    VRMsg::DoViewChange(b, from) => {
+                        #[cfg(feature = "simulate_partition")] {
+                            if self.disconnected_peers.contains(&from) {
+                                return Handled::Ok;
+                            }
+                        }
                         match self.viewchange_status {
                             ViewChangeStatus::Candidate(l, counter) if l == b => {
                                 let new_counter = counter + 1;
@@ -318,6 +335,8 @@ impl Actor for VRLeaderElectionComp {
                                     self.ble_port.trigger(Leader::with(self.pid, l));
                                     self.viewchange_status = ViewChangeStatus::Elected(l);
                                     self.leader_is_alive = true;
+                                    self.latest_ballot_as_leader = l;
+                                    self.quick_timeout = false;
                                 } else {
                                     self.viewchange_status = ViewChangeStatus::Candidate(l, new_counter);
                                 }

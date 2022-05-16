@@ -1,48 +1,27 @@
-use crate::bench::atomic_broadcast::messages::{
-    paxos::ballot_leader_election::*, StopMsg as NetStopMsg, StopMsgDeser,
-};
 #[cfg(feature = "measure_io")]
 use crate::bench::atomic_broadcast::util::io_metadata::IOMetaData;
+use crate::bench::atomic_broadcast::{
+    ble::{Ballot, BallotLeaderElection, Stop},
+    messages::{
+        paxos::mp_leader_election::{MPLeaderSer, *},
+        StopMsg as NetStopMsg, StopMsgDeser,
+    },
+};
 use hashbrown::HashSet;
 use kompact::prelude::*;
-use omnipaxos::leader_election::{Leader, Round};
+use omnipaxos::leader_election::Leader;
 use std::time::Duration;
 
-#[derive(Clone, Copy, Eq, Debug, Default, Ord, PartialOrd, PartialEq)]
-pub struct Ballot {
-    pub n: u32,
-    pub pid: u64,
-}
-
-impl Ballot {
-    pub fn with(n: u32, pid: u64) -> Ballot {
-        Ballot { n, pid }
-    }
-}
-
-impl Round for Ballot {}
-
-#[derive(Debug)]
-pub struct Stop(pub Ask<u64, ()>); // pid
-
-pub struct BallotLeaderElection;
-
-impl Port for BallotLeaderElection {
-    type Indication = Leader<Ballot>;
-    type Request = ();
-}
-
 #[derive(ComponentDefinition)]
-pub struct BallotLeaderComp {
+pub struct MultiPaxosLeaderComp {
     // TODO decouple from kompact, similar style to tikv_raft with tick() replacing timers
     ctx: ComponentContext<Self>,
     ble_port: ProvidedPort<BallotLeaderElection>,
     pid: u64,
     pub(crate) peers: Vec<ActorPath>,
     hb_round: u32,
-    ballots: Vec<(Ballot, bool)>,
+    ballots: Vec<Ballot>,
     current_ballot: Ballot, // (round, pid)
-    candidate: bool,
     leader: Option<Ballot>,
     hb_delay: u64,
     delta: u64,
@@ -59,7 +38,7 @@ pub struct BallotLeaderComp {
     disconnected_peers: Vec<u64>,
 }
 
-impl BallotLeaderComp {
+impl MultiPaxosLeaderComp {
     pub fn with(
         peers: Vec<ActorPath>,
         pid: u64,
@@ -68,7 +47,7 @@ impl BallotLeaderComp {
         quick_timeout: bool,
         initial_leader: Option<Leader<Ballot>>,
         initial_election_factor: u64,
-    ) -> BallotLeaderComp {
+    ) -> MultiPaxosLeaderComp {
         let n = &peers.len() + 1;
         let (leader, initial_ballot) = match initial_leader {
             Some(l) => {
@@ -85,7 +64,7 @@ impl BallotLeaderComp {
                 (None, initial_ballot)
             }
         };
-        BallotLeaderComp {
+        MultiPaxosLeaderComp {
             ctx: ComponentContext::uninitialised(),
             ble_port: ProvidedPort::uninitialised(),
             pid,
@@ -94,7 +73,6 @@ impl BallotLeaderComp {
             hb_round: 0,
             ballots: Vec::with_capacity(n),
             current_ballot: initial_ballot,
-            candidate: true,
             leader,
             hb_delay,
             delta,
@@ -111,6 +89,7 @@ impl BallotLeaderComp {
         }
     }
 
+    /*
     /// Sets initial state after creation. Should only be used before being started.
     pub fn set_initial_leader(&mut self, l: Leader<Ballot>) {
         assert!(self.leader.is_none());
@@ -118,29 +97,17 @@ impl BallotLeaderComp {
         self.leader = Some(leader_ballot);
         if l.pid == self.pid {
             self.current_ballot = leader_ballot;
-            self.candidate = true;
         } else {
             self.current_ballot = Ballot::with(0, self.pid);
-            self.candidate = false;
         };
         self.quick_timeout = false;
         self.ble_port.trigger(Leader::with(l.pid, leader_ballot));
-    }
+    }*/
 
     fn check_leader(&mut self) {
         let ballots = std::mem::take(&mut self.ballots);
-        // info!(self.ctx.log(), "check leader ballots: {:?}", ballots);
-        let top_ballot = ballots
-            .into_iter()
-            .filter_map(|(ballot, candidate)| {
-                if candidate == true {
-                    Some(ballot)
-                } else {
-                    None
-                }
-            })
-            .max()
-            .unwrap_or_default();
+        // info!(self.ctx.log(), "check leader ballots: {:?}, leader: {:?}", ballots, self.leader);
+        let top_ballot = ballots.into_iter().max().unwrap_or_default();
         if top_ballot < self.leader.unwrap_or_default() {
             // did not get HB from leader
             debug!(
@@ -149,7 +116,6 @@ impl BallotLeaderComp {
             );
             self.current_ballot.n = self.leader.unwrap_or_default().n + 1;
             self.leader = None;
-            self.candidate = true;
         } else if self.leader != Some(top_ballot) {
             // got a new leader with greater ballot
             self.quick_timeout = false;
@@ -181,11 +147,10 @@ impl BallotLeaderComp {
 
     fn hb_timeout(&mut self) -> Handled {
         if self.ballots.len() + 1 >= self.majority {
-            self.ballots.push((self.current_ballot, self.candidate));
+            self.ballots.push(self.current_ballot);
             self.check_leader();
         } else {
             self.ballots.clear();
-            self.candidate = false;
         }
         self.new_hb_round();
         Handled::Ok
@@ -204,6 +169,7 @@ impl BallotLeaderComp {
 
     #[cfg(feature = "simulate_partition")]
     pub fn disconnect_peers(&mut self, peers: Vec<u64>, lagging_peer: Option<u64>) {
+        // info!(self.ctx.log(), "SIMULATE PARTITION: {:?}, lagging: {:?}", peers, lagging_peer);
         if let Some(lp) = lagging_peer {
             // disconnect from lagging peer first
             self.disconnected_peers.push(lp);
@@ -233,7 +199,7 @@ impl BallotLeaderComp {
     }
 }
 
-impl ComponentLifecycle for BallotLeaderComp {
+impl ComponentLifecycle for MultiPaxosLeaderComp {
     fn on_start(&mut self) -> Handled {
         debug!(self.ctx.log(), "Started BLE with params: current_ballot: {:?}, quick timeout: {}, hb_round: {}, leader: {:?}", self.current_ballot, self.quick_timeout, self.hb_round, self.leader);
         let bc = BufferConfig::default();
@@ -248,13 +214,13 @@ impl ComponentLifecycle for BallotLeaderComp {
     }
 }
 
-impl Provide<BallotLeaderElection> for BallotLeaderComp {
+impl Provide<BallotLeaderElection> for MultiPaxosLeaderComp {
     fn handle(&mut self, _: <BallotLeaderElection as Port>::Request) -> Handled {
         unimplemented!()
     }
 }
 
-impl Actor for BallotLeaderComp {
+impl Actor for MultiPaxosLeaderComp {
     type Message = Stop;
 
     fn receive_local(&mut self, stop: Stop) -> Handled {
@@ -280,13 +246,13 @@ impl Actor for BallotLeaderComp {
     fn receive_network(&mut self, m: NetMessage) -> Handled {
         let NetMessage { sender, data, .. } = m;
         match_deser! {data {
-            msg(hb): HeartbeatMsg [using BallotLeaderSer] => {
+            msg(hb): HeartbeatMsg [using MPLeaderSer] => {
                 match hb {
                     HeartbeatMsg::Request(req) if !self.stopped => {
                         #[cfg(feature = "measure_io")] {
                             self.io_metadata.update_received(&req);
                         }
-                        let hb_reply = HeartbeatReply::with(req.round, self.current_ballot, self.candidate);
+                        let hb_reply = HeartbeatReply::with(req.round, self.current_ballot, self.leader.unwrap_or_default());
                         #[cfg(feature = "measure_io")] {
                             self.io_metadata.update_sent(&hb_reply);
                         }
@@ -302,7 +268,14 @@ impl Actor for BallotLeaderComp {
                             self.io_metadata.update_received(&rep);
                         }
                         if rep.round == self.hb_round {
-                            self.ballots.push((rep.ballot, rep.candidate));
+                            self.ballots.push(rep.ballot);
+                            if rep.current_leader > self.leader.unwrap_or_default() {
+                                // got a new leader with greater ballot
+                                self.quick_timeout = false;
+                                self.leader = Some(rep.current_leader);
+                                let top_pid = rep.current_leader.pid;
+                                self.ble_port.trigger(Leader::with(top_pid, rep.current_leader));
+                            }
                         } else {
                             trace!(self.ctx.log(), "Got late hb reply. HB delay: {}", self.hb_delay);
                             self.hb_delay += self.delta;

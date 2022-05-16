@@ -22,6 +22,7 @@ pub const RECONFIG_ID: SerId = 61;
 pub const TEST_SEQ_ID: SerId = 62;
 pub const STOP_ID: SerId = 63;
 pub const VR_ID: SerId = 65;
+pub const MP_ID: SerId = 66;
 
 #[cfg(feature = "simulate_partition")]
 pub const PARTITIONING_EXP_ID: SerId = 64;

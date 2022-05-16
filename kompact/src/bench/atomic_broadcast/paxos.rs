@@ -42,7 +42,7 @@ use std::io::Write;
 
 #[cfg(feature = "simulate_partition")]
 use crate::bench::atomic_broadcast::messages::{PartitioningExpMsg, PartitioningExpMsgDeser};
-use crate::bench::atomic_broadcast::vr_le::VRLeaderElectionComp;
+use crate::bench::atomic_broadcast::{mp_le::MultiPaxosLeaderComp, vr_le::VRLeaderElectionComp};
 #[cfg(feature = "simulate_partition")]
 use crate::bench::serialiser_ids::PARTITIONING_EXP_ID;
 
@@ -118,12 +118,13 @@ struct HoldBackProposals {
 pub enum LeaderElectionComp {
     BLE(Arc<Component<BallotLeaderComp>>),
     VR(Arc<Component<VRLeaderElectionComp>>),
-    // MultiPaxos
+    MultiPaxos(Arc<Component<MultiPaxosLeaderComp>>),
 }
 
 pub enum LeaderElection {
     BLE,
     VR,
+    MultiPaxos,
 }
 
 impl HoldBackProposals {
@@ -409,6 +410,23 @@ where
                     .expect("Could not connect VR and PaxosComp!");
                 (LeaderElectionComp::VR(vr), vr_f, vr_alias_f)
             }
+            LeaderElection::MultiPaxos => {
+                let (mp_le, mp_f) = system.create_and_register(|| {
+                    MultiPaxosLeaderComp::with(
+                        ble_peers,
+                        self.pid,
+                        election_timeout as u64,
+                        ble_delta as u64,
+                        ble_quick_start,
+                        skip_prepare_n,
+                        initial_election_factor,
+                    )
+                });
+                let mp_le_alias_f = system.register_by_alias(&mp_le, ble_alias);
+                biconnect_components::<BallotLeaderElection, _, _>(&mp_le, &paxos)
+                    .expect("Could not connect BLE and PaxosComp!");
+                (LeaderElectionComp::MultiPaxos(mp_le), mp_f, mp_le_alias_f)
+            }
         };
         let communicator_alias = format!(
             "{}{},{}-{}",
@@ -509,6 +527,10 @@ where
             LeaderElectionComp::VR(vr) => {
                 self.ctx.system().start(vr);
                 vr.id()
+            }
+            LeaderElectionComp::MultiPaxos(mp) => {
+                self.ctx.system().start(mp);
+                mp.id()
             }
         };
         self.active_config = ConfigMeta::new(config_id);
@@ -615,6 +637,9 @@ where
                 LeaderElectionComp::VR(vr) => {
                     stop_futures.push(vr.actor_ref().ask_with(|p| BLEStop(Ask::new(p, self.pid))));
                 }
+                LeaderElectionComp::MultiPaxos(mp) => {
+                    stop_futures.push(mp.actor_ref().ask_with(|p| BLEStop(Ask::new(p, self.pid))));
+                }
             }
         }
         let (paxos_last, rest) = self
@@ -662,6 +687,10 @@ where
                 }
                 LeaderElectionComp::VR(vr) => {
                     let vr_f = system.kill_notify(vr);
+                    kill_futures.push(vr_f);
+                }
+                LeaderElectionComp::MultiPaxos(mp) => {
+                    let vr_f = system.kill_notify(mp);
                     kill_futures.push(vr_f);
                 }
             }
@@ -1256,8 +1285,11 @@ where
                                         LeaderElectionComp::BLE(ble) => {
                                             ble.on_definition(|ble| ble.disconnect_peers(peers.clone(), lagging_peer.clone()));
                                         }
-                                        LeaderElectionComp:: VR(vr) => {
+                                        LeaderElectionComp::VR(vr) => {
                                             vr.on_definition(|vr| vr.disconnect_peers(peers.clone(), lagging_peer.clone()));
+                                        }
+                                        LeaderElectionComp::MultiPaxos(mp) => {
+                                            mp.on_definition(|mp| mp.disconnect_peers(peers.clone(), lagging_peer.clone()));
                                         }
                                     }
                                 }
@@ -1282,8 +1314,11 @@ where
                                         LeaderElectionComp::BLE(ble) => {
                                             ble.on_definition(|ble| ble.recover_peers());
                                         }
-                                        LeaderElectionComp:: VR(vr) => {
+                                        LeaderElectionComp::VR(vr) => {
                                             vr.on_definition(|vr| vr.recover_peers());
+                                        }
+                                        LeaderElectionComp::MultiPaxos(mp) => {
+                                            mp.on_definition(|mp| mp.recover_peers());
                                         }
                                     }
                                 }

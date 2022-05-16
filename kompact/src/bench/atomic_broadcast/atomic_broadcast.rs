@@ -868,7 +868,7 @@ impl DistributedBenchmarkClient for AtomicBroadcastClient {
             a if a == "paxos" || a == "vr" || a == "multi-paxos" => {
                 let leader_election = match a {
                     "vr" => LeaderElection::VR,
-                    "multi-paxos" => todo!(),
+                    "multi-paxos" => LeaderElection::MultiPaxos,
                     _ => LeaderElection::BLE,
                 };
                 let (paxos_comp, unique_reg_f) = system.create_and_register(|| {
