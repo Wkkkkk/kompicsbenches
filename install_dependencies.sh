@@ -8,6 +8,8 @@ curl -sL "https://keyserver.ubuntu.com/pks/lookup?op=get&search=0x2EE0EA64E40A89
 sudo apt-get update
 sudo apt install make
 sudo apt install build-essential
+sudo apt-get install zip
+sudo apt-get install unzip
 
 # JDK
 sudo apt-get install default-jdk -y

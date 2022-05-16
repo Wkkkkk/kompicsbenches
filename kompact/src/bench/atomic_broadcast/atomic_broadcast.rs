@@ -346,7 +346,7 @@ impl AtomicBroadcastMaster {
             )));
         }
         match &c.algorithm.to_lowercase() {
-            a if a != "paxos" && a != "raft" && a != "vr" && a != "multi-paxos" => {
+            a if a != "paxos" && a != "raft" && a != "vr" && a != "multi-paxos" && a != "raft_pv_qc" => {
                 return Err(BenchmarkError::InvalidTest(format!(
                     "Unimplemented atomic broadcast algorithm: {}",
                     &c.algorithm
@@ -890,10 +890,11 @@ impl DistributedBenchmarkClient for AtomicBroadcastClient {
                 self.paxos_comp = Some(paxos_comp);
                 self_path
             }
-            "raft" => {
+            r if r == "raft" || r == "raft_pv_qc" => {
+                let pv_qc = r == "raft_pv_qc";
                 /*** Setup RaftComp ***/
                 let (raft_comp, unique_reg_f) = system.create_and_register(|| {
-                    RaftComp::<Storage>::with(initial_config, experiment_params)
+                    RaftComp::<Storage>::with(initial_config, experiment_params, pv_qc)
                 });
                 unique_reg_f.wait_expect(REGISTER_TIMEOUT, "RaftComp failed to register!");
                 let self_path = system
