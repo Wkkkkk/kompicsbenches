@@ -26,17 +26,36 @@ colors = {
   "Raft": "orange",
   "Raft replace follower": "orange",
   "Raft replace leader": "crimson",
+  "Raft, n=3": "orange",
+  "Raft, n=5": "crimson",
+
+  "Raft 1 min": "silver",
+  "Raft 2 min": "gray",
+  "Raft 4 min": "black",
+
   "Raft PV+CQ": "crimson",
-  "Raft PV+CQ 1 min": "limegreen",
+  "Raft PV+CQ 1 min": "gold",
   "Raft PV+CQ 2 min": "orange",
   "Raft PV+CQ 4 min": "crimson",
-  "Raft, n=3": "orange",
-  "Raft, n=5": "crimson"
+
+  "Multi-Paxos": "blueviolet",
+  "Multi-Paxos 1 min": "darkviolet",
+  "Multi-Paxos 2 min": "blueviolet",
+  "Multi-Paxos 4 min": "indigo",
+
+  "VR": "lime",
+  "VR 1 min": "lime",
+  "VR 2 min": "teal",
+  "VR 4 min": "darkgreen",
 }
 
 linestyles = {
   "Omni-Paxos": "solid",
-  "Raft": "dashdot" ,
+  "Raft": "dashdot",
+  "Raft PV+CQ": "dashdot",
+  "VR": "dotted",
+  "Multi-Paxos": "dashed"
+
 }
 
 markers = {
