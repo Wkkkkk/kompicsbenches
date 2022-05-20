@@ -145,25 +145,25 @@ for d in directories:	# per duration
 			raft_pv_cq_ci_lo.append(ci_lo)
 			raft_pv_cq_ci_hi.append(ci_hi)
 
-all_min = [paxos[0], raft_pv_cq[0], vr[0], multi_paxos[0],
-	   paxos[1], raft_pv_cq[1], vr[1], multi_paxos[1],
-	   paxos[2], raft_pv_cq[2], vr[2], multi_paxos[2]]
+all_min = [paxos[0], raft_pv_cq[0], vr[0], multi_paxos[0], raft[0],
+	   	   paxos[1], raft_pv_cq[1], vr[1], multi_paxos[1], raft[1],
+	   	   paxos[2], raft_pv_cq[2], vr[2], multi_paxos[2], raft[2]]
 
-all_ci_lo = [paxos_ci_lo[0], raft_pv_cq_ci_lo[0], vr_ci_lo[0], multi_paxos_ci_lo[0],
-	     paxos_ci_lo[1], raft_pv_cq_ci_lo[1], vr_ci_lo[1], multi_paxos_ci_lo[1],
-	     paxos_ci_lo[2], raft_pv_cq_ci_lo[2], vr_ci_lo[2], multi_paxos_ci_lo[2]]
+all_ci_lo = [paxos_ci_lo[0], raft_pv_cq_ci_lo[0], vr_ci_lo[0], multi_paxos_ci_lo[0], raft_ci_lo[0],
+	     	 paxos_ci_lo[1], raft_pv_cq_ci_lo[1], vr_ci_lo[1], multi_paxos_ci_lo[1], raft_ci_lo[1],
+	     	 paxos_ci_lo[2], raft_pv_cq_ci_lo[2], vr_ci_lo[2], multi_paxos_ci_lo[2], raft_ci_lo[2]]
 
-all_ci_hi = [paxos_ci_hi[0], raft_pv_cq_ci_hi[0], vr_ci_hi[0], multi_paxos_ci_hi[0],
-	     paxos_ci_hi[1], raft_pv_cq_ci_hi[1], vr_ci_hi[1], multi_paxos_ci_hi[1],
-	     paxos_ci_hi[2], raft_pv_cq_ci_hi[2], vr_ci_hi[2], multi_paxos_ci_hi[2]]
+all_ci_hi = [paxos_ci_hi[0], raft_pv_cq_ci_hi[0], vr_ci_hi[0], multi_paxos_ci_hi[0], raft_ci_hi[0],
+	     	 paxos_ci_hi[1], raft_pv_cq_ci_hi[1], vr_ci_hi[1], multi_paxos_ci_hi[1], raft_ci_hi[1],
+	     	 paxos_ci_hi[2], raft_pv_cq_ci_hi[2], vr_ci_hi[2], multi_paxos_ci_hi[2], raft_ci_hi[2]]
 
 
-dfdict = {'Partition Duration': ['1 min', '1 min', '1 min', '1 min',
-				 '2 min', '2 min', '2 min', '2 min', 
-				 '4 min', '4 min', '4 min', '4 min'],
-      '': ['Omni-Paxos', 'Raft PV+CQ', 'VR', 'Multi-Paxos',
-      		  'Omni-Paxos', 'Raft PV+CQ', 'VR', 'Multi-Paxos',
-      		  'Omni-Paxos', 'Raft PV+CQ', 'VR', 'Multi-Paxos'],
+dfdict = {'Partition Duration': ['1 min', '1 min', '1 min', '1 min', '1 min',
+ 				 '2 min', '2 min', '2 min', '2 min', '2 min',
+ 				 '4 min', '4 min', '4 min', '4 min', '4 min'],
+      '': ['Omni-Paxos', 'Raft PV+CQ', 'VR', 'Multi-Paxos', 'Raft',
+      	   'Omni-Paxos', 'Raft PV+CQ', 'VR', 'Multi-Paxos', 'Raft',
+      	   'Omni-Paxos', 'Raft PV+CQ', 'VR', 'Multi-Paxos', 'Raft'],
       'Duration': all_min,
       'CiLo': all_ci_lo,
       'CiHi': all_ci_hi}
@@ -177,27 +177,32 @@ for col in errLo:  # Iterate over bar groups (represented as columns)
     err.append([errLo[col].values, errHi[col].values])
 print(err)
 
-ax = df.pivot(index='Partition Duration', columns='', values='Duration').plot(kind='bar', yerr=err)
+# sorted order: Multi-Paxos, Omni-Paxos, Raft, Raft PV+CQ, VR
+ax = df.pivot(index='Partition Duration', columns='', values='Duration').plot(kind='bar', alpha=.99, yerr=err, error_kw=dict(lw=2, capsize=3, capthick=2)
+,color = ["tab:red", "tab:blue", "tab:purple", "tab:orange", "tab:green"])
 
-#df = pd.DataFrame([one_min, two_min, four_min], columns=['Partition Duration', 'Omni-Paxos', 'Raft PV+CQ', 'VR', 'Multi-Paxos'])
+bars = ax.patches
+patterns =['\\', '-', '/','+','//']
+hatches = [p for p in patterns for i in range(len(df))]
+for i, bar in enumerate(bars):
+	if i < 3:
+		hatch = patterns[0]
+	elif i < 6:
+		hatch = patterns[1]
+	elif i < 9:
+		hatch = patterns[2]
+	elif i < 12:
+		hatch = patterns[3]
+	elif i < 15:
+		hatch = patterns[4]
+	bar.set_hatch(hatch)
 
-# view data
-#print(df)
-  
-# plot grouped bar chart
-#ax = df.plot(x='Partition Duration',
-#        kind='bar',
-#        stacked=False,
-#        title='Constrained Election scenario')
-
-#for p in ax.patches:
-#    ax.bar_label(p)
-print(err)
-for container in ax.containers :
-    try:
-    	ax.bar_label(container, padding=1)
-    except:
-    	continue   
+#ax.set_ylabel("Down-time (s)")
+y_axis = np.arange(0, 260, 50)
+ax.set_yticks(y_axis, labels=[])
 ax.set_xticklabels(ax.get_xticklabels(), rotation=0)
-ax.get_figure().savefig("bar_constrained.pdf", dpi = 600, bbox_inches='tight')
+ax.get_legend().remove()
+fig = ax.get_figure()
+fig.set_size_inches(8.5, 4.5)
+fig.savefig("bar_constrained.pdf", dpi = 600, bbox_inches='tight')
 

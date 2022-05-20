@@ -175,13 +175,40 @@ for col in errLo:  # Iterate over bar groups (represented as columns)
     err.append([errLo[col].values, errHi[col].values])
 print(err)
 
-ax = df.pivot(index='Partition Duration', columns='', values='Duration').plot(kind='bar', yerr=err)
+# sorted order: Multi-Paxos, Omni-Paxos, Raft, Raft PV+CQ, VR
+ax = df.pivot(index='Partition Duration', columns='', values='Duration').plot(kind='bar', alpha=.99, yerr=err, error_kw=dict(lw=2, capsize=3, capthick=2)
+, color = ["tab:red", "tab:blue", "tab:purple", "tab:orange", "tab:green"]
+)
   
 for container in ax.containers :
     try:
     	ax.bar_label(container, padding=1)
     except:
     	continue   
-ax.set_xticklabels(ax.get_xticklabels(), rotation=0)
-ax.get_figure().savefig("bar_quorumloss.pdf", dpi = 600, bbox_inches='tight')
 
+y_axis = np.arange(0, 260, 50)
+
+bars = ax.patches
+patterns =['\\', '-', '/','+','//']
+hatches = [p for p in patterns for i in range(len(df))]
+for i, bar in enumerate(bars):
+	if i < 3:
+		hatch = patterns[0]
+	elif i < 6:
+		hatch = patterns[1]
+	elif i < 9:
+		hatch = patterns[2]
+	elif i < 12:
+		hatch = patterns[3]
+	elif i < 15:
+		hatch = patterns[4]
+	bar.set_hatch(hatch)
+
+
+ax.set_xticklabels(ax.get_xticklabels(), rotation=0)
+ax.set_yticks(y_axis)
+ax.set_ylabel("Down-time (s)", size=20)
+ax.legend(fontsize=18)
+fig = ax.get_figure()
+fig.set_size_inches(8.5, 4.5)
+fig.savefig("bar_quorumloss.pdf", dpi = 600, bbox_inches='tight')

@@ -32,5 +32,5 @@ for filename in data_files :
     t_bounds = t.interval(0.95, len(data) - 1)
     # sum mean to the confidence interval
     ci = [mean + critval * stddev / sqrt(len(data)) for critval in t_bounds]
-    print "%s" % filename
-    print "%f,%f,%f,%f,%f,%f" % (mean, stddev, sem, rse, ci[0], ci[1])
+    print(filename)
+    print(mean, stddev, sem, rse, ci[0], ci[1])
