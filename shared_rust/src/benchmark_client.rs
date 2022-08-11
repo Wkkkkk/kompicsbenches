@@ -379,6 +379,7 @@ enum State {
     Stopped,
 }
 
+#[allow(dead_code)]
 #[derive(Debug, Clone)]
 enum StateError {
     InvalidTransition { from: String, to: String, expected: String }, // to avoid clone on State

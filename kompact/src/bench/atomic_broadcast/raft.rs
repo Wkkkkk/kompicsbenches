@@ -6,20 +6,21 @@ use super::{
     storage::raft::*,
 };
 #[cfg(test)]
-use crate::bench::atomic_broadcast::atomic_broadcast::tests::SequenceResp;
+use crate::bench::atomic_broadcast::benchmark::tests::SequenceResp;
 #[cfg(feature = "simulate_partition")]
 use crate::bench::atomic_broadcast::messages::{PartitioningExpMsg, PartitioningExpMsgDeser};
 #[cfg(feature = "periodic_replica_logging")]
-use crate::bench::atomic_broadcast::util::exp_params::WINDOW_DURATION;
+use crate::bench::atomic_broadcast::util::exp_util::WINDOW_DURATION;
 #[cfg(feature = "measure_io")]
 use crate::bench::atomic_broadcast::util::io_metadata::IOMetaData;
 #[cfg(feature = "simulate_partition")]
 use crate::bench::serialiser_ids::PARTITIONING_EXP_ID;
 use crate::{
     bench::atomic_broadcast::{
-        atomic_broadcast::{Done, ExperimentParams},
+        benchmark::Done,
         client::create_raw_proposal,
         communicator::{AtomicBroadcastCompMsg, CommunicationPort, Communicator, CommunicatorMsg},
+        util::exp_util::ExperimentParams,
     },
     partitioning_actor::{PartitioningActorMsg, PartitioningActorSer},
     serialiser_ids::ATOMICBCAST_ID,
@@ -69,14 +70,18 @@ where
     cached_client: Option<ActorPath>,
     current_leader: u64,
     experiment_params: ExperimentParams,
-    prevote_checkquorum: bool
+    prevote_checkquorum: bool,
 }
 
 impl<S> RaftComp<S>
 where
     S: RaftStorage + Send + Clone + 'static,
 {
-    pub fn with(initial_config: Vec<u64>, experiment_params: ExperimentParams, prevote_checkquorum: bool) -> Self {
+    pub fn with(
+        initial_config: Vec<u64>,
+        experiment_params: ExperimentParams,
+        prevote_checkquorum: bool,
+    ) -> Self {
         RaftComp {
             ctx: ComponentContext::uninitialised(),
             pid: 0,
@@ -91,7 +96,7 @@ where
             cached_client: None,
             current_leader: 0,
             experiment_params,
-            prevote_checkquorum
+            prevote_checkquorum,
         }
     }
 

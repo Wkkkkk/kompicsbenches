@@ -137,6 +137,7 @@ pub fn run(
     inst.start();
 }
 
+#[allow(dead_code)]
 #[derive(Clone)]
 pub(crate) struct ClientEntry {
     address: String,
@@ -444,8 +445,7 @@ impl BenchmarkMaster {
                 state_copy
                     .cas(State::RUN, State::CLEANUP)
                     .expect("Wasn't running before cleanup!?!");
-                let itf: impl Future<Item = (DistributedIteration, bool), Error = grpc::Error> =
-                    it.cleanup();
+                let itf = it.cleanup();
                 let state_copy2 = state_copy.clone();
                 let itlf = itf.map(move |(it, is_final)| {
                     if is_final {
@@ -735,6 +735,7 @@ enum State {
     STOPPED,
 }
 
+#[allow(dead_code)]
 #[derive(Debug, Clone)]
 enum StateError {
     InvalidTransition { from: State, to: State, expected: State },

@@ -5,9 +5,9 @@ use super::messages::{
 #[cfg(feature = "simulate_partition")]
 use crate::bench::atomic_broadcast::messages::PartitioningExpMsg;
 use crate::bench::atomic_broadcast::{
-    atomic_broadcast::{NetworkScenario, ReconfigurationPolicy},
+    benchmark_master::{NetworkScenario, ReconfigurationPolicy},
     messages::{ReconfigurationProposal, ReconfigurationResp},
-    util::exp_params::*,
+    util::exp_util::*,
 };
 use hashbrown::HashMap;
 use kompact::prelude::*;

@@ -1,4 +1,6 @@
-pub mod atomic_broadcast;
+pub mod benchmark;
+mod benchmark_client;
+mod benchmark_master;
 mod ble;
 mod client;
 mod communicator;

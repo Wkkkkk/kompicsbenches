@@ -1,5 +1,4 @@
 use super::{
-    atomic_broadcast::ExperimentParams,
     communicator::{AtomicBroadcastCompMsg, CommunicationPort, Communicator, CommunicatorMsg},
     messages::{
         paxos::{
@@ -10,10 +9,10 @@ use super::{
     },
 };
 #[cfg(test)]
-use crate::bench::atomic_broadcast::atomic_broadcast::tests::SequenceResp;
+use crate::bench::atomic_broadcast::benchmark::tests::SequenceResp;
 use crate::{
     bench::atomic_broadcast::{
-        atomic_broadcast::Done,
+        benchmark::Done,
         ble::{Ballot, BallotLeaderComp, BallotLeaderElection, Stop as BLEStop},
     },
     partitioning_actor::{PartitioningActorMsg, PartitioningActorSer},
@@ -27,16 +26,16 @@ use std::{fmt::Debug, ops::DerefMut, sync::Arc, time::Duration};
 use crate::bench::atomic_broadcast::messages::paxos::SegmentIndex;
 use omnipaxos::{leader_election::*, paxos::*, storage::*};
 
-use crate::bench::atomic_broadcast::client::create_raw_proposal;
 #[cfg(feature = "measure_io")]
-use crate::bench::atomic_broadcast::{util::exp_params::*, util::io_metadata::IOMetaData};
+use crate::bench::atomic_broadcast::util::io_metadata::IOMetaData;
+use crate::bench::atomic_broadcast::{client::create_raw_proposal, util::exp_util::*};
 #[cfg(feature = "measure_io")]
 use chrono::{DateTime, Utc};
 #[cfg(feature = "measure_io")]
 use std::time::SystemTime;
 
 #[cfg(feature = "periodic_replica_logging")]
-use crate::bench::atomic_broadcast::util::exp_params::WINDOW_DURATION;
+use crate::bench::atomic_broadcast::util::exp_util::WINDOW_DURATION;
 #[cfg(feature = "measure_io")]
 use std::io::Write;
 

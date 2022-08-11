@@ -1,6 +1,6 @@
 extern crate raft as tikv_raft;
 
-use crate::{bench::atomic_broadcast::atomic_broadcast::ReconfigurationPolicy, serialiser_ids};
+use crate::{bench::atomic_broadcast::benchmark_master::ReconfigurationPolicy, serialiser_ids};
 use kompact::prelude::*;
 use protobuf::{parse_from_bytes, Message};
 use rand::Rng;
