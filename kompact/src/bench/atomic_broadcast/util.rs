@@ -4,6 +4,12 @@ pub(crate) mod exp_util {
     };
     use hocon::HoconLoader;
     use std::{path::PathBuf, time::Duration};
+    use std::any::Any;
+    use std::fmt::Debug;
+    use kompact::prelude::{Buf, BufMut, Deserialisable, Deserialiser, Serialisable};
+    use omnipaxos_core::storage::{Entry, Snapshot, Storage};
+    use omnipaxos_core::storage::memory_storage::MemoryStorage;
+    use serde::{Serialize, de::DeserializeOwned};
 
     pub const TCP_NODELAY: bool = true;
     pub const CONFIG_PATH: &str = "./configs/atomic_broadcast.conf";
@@ -13,6 +19,20 @@ pub(crate) mod exp_util {
 
     pub const WINDOW_DURATION: Duration = Duration::from_millis(5000);
     pub const DATA_SIZE: usize = 8;
+
+    pub trait LogCommand: Entry + Serialize + DeserializeOwned + Send + Sync + 'static + Debug {
+    }
+    pub trait LogSnapshot<T: LogCommand>: Snapshot<T> + Send + Sync + 'static + Debug {}
+    pub trait ReplicaStore<T: LogCommand, S: LogSnapshot<T>>: Storage<T, S> + Default + Send + Sync + 'static {}
+
+    pub type EntryType = Vec<u8>;
+    pub type SnapshotType = ();
+    pub type PaxosStorageType = MemoryStorage<EntryType, SnapshotType>;
+
+    impl LogCommand for EntryType {}
+    // impl LogSnapshot<EntryType> for SnapshotType {}
+    impl ReplicaStore<EntryType, SnapshotType> for PaxosStorageType {}
+    impl LogSnapshot<EntryType> for () {}
 
     pub struct ExperimentParams {
         pub election_timeout: u64,

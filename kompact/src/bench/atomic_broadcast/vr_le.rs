@@ -1,7 +1,7 @@
 #[cfg(feature = "measure_io")]
 use crate::bench::atomic_broadcast::util::io_metadata::IOMetaData;
 use crate::bench::atomic_broadcast::{
-    ble::{Ballot, BallotLeaderElection, Stop},
+    ble::{BallotLeaderElection, Stop},
     messages::{
         paxos::{ballot_leader_election::*, vr_leader_election::*},
         StopMsg as NetStopMsg, StopMsgDeser,
@@ -9,8 +9,8 @@ use crate::bench::atomic_broadcast::{
 };
 use hashbrown::HashSet;
 use kompact::prelude::*;
-use omnipaxos::leader_election::Leader;
 use std::time::Duration;
+use omnipaxos_core::ballot_leader_election::Ballot;
 
 #[derive(ComponentDefinition)]
 pub struct VRLeaderElectionComp {
@@ -138,7 +138,7 @@ impl VRLeaderElectionComp {
             .views
             .get(self.view_number as usize % self.views.len())
             .unwrap();
-        Ballot::with(self.view_number as u32, *candidate)
+        Ballot::with(self.view_number as u32, 0, *candidate)
     }
 
     fn start_view_change(&self, b: Ballot) {
@@ -332,7 +332,7 @@ impl Actor for VRLeaderElectionComp {
                                 let new_counter = counter + 1;
                                 if new_counter == self.majority {
                                     self.stop_timer();
-                                    self.ble_port.trigger(Leader::with(self.pid, l));
+                                    self.ble_port.trigger(l);
                                     self.viewchange_status = ViewChangeStatus::Elected(l);
                                     self.leader_is_alive = true;
                                     self.latest_ballot_as_leader = l;

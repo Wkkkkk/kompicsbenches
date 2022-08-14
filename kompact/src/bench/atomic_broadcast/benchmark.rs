@@ -18,7 +18,7 @@ impl DistributedBenchmark for AtomicBroadcast {
     type ClientConf = ClientParams;
     type ClientData = ActorPath;
     type Master = AtomicBroadcastMaster;
-    type Client = AtomicBroadcastClient;
+    type Client = AtomicBroadcastClient<>;
     const LABEL: &'static str = "AtomicBroadcast";
 
     fn new_master() -> Self::Master {

@@ -1,7 +1,7 @@
 #[cfg(feature = "measure_io")]
 use crate::bench::atomic_broadcast::util::io_metadata::IOMetaData;
 use crate::bench::atomic_broadcast::{
-    ble::{Ballot, BallotLeaderElection, Stop},
+    ble::{BallotLeaderElection, Stop},
     messages::{
         paxos::mp_leader_election::{MPLeaderSer, *},
         StopMsg as NetStopMsg, StopMsgDeser,
@@ -9,8 +9,8 @@ use crate::bench::atomic_broadcast::{
 };
 use hashbrown::HashSet;
 use kompact::prelude::*;
-use omnipaxos::leader_election::Leader;
 use std::time::Duration;
+use omnipaxos_core::ballot_leader_election::Ballot;
 
 #[derive(ComponentDefinition)]
 pub struct MultiPaxosLeaderComp {
@@ -45,22 +45,22 @@ impl MultiPaxosLeaderComp {
         hb_delay: u64,
         delta: u64,
         quick_timeout: bool,
-        initial_leader: Option<Leader<Ballot>>,
+        initial_leader: Option<Ballot>,
         initial_election_factor: u64,
     ) -> MultiPaxosLeaderComp {
         let n = &peers.len() + 1;
         let (leader, initial_ballot) = match initial_leader {
             Some(l) => {
-                let leader_ballot = Ballot::with(l.round.n, l.pid);
+                let leader_ballot = Ballot::with(l.n, 0, l.pid);
                 let initial_ballot = if l.pid == pid {
                     leader_ballot
                 } else {
-                    Ballot::with(0, pid)
+                    Ballot::with(0, 0, pid)
                 };
                 (Some(leader_ballot), initial_ballot)
             }
             None => {
-                let initial_ballot = Ballot::with(0, pid);
+                let initial_ballot = Ballot::with(0, 0, pid);
                 (None, initial_ballot)
             }
         };
@@ -91,7 +91,7 @@ impl MultiPaxosLeaderComp {
 
     /*
     /// Sets initial state after creation. Should only be used before being started.
-    pub fn set_initial_leader(&mut self, l: Leader<Ballot>) {
+    pub fn set_initial_leader(&mut self, l: Ballot) {
         assert!(self.leader.is_none());
         let leader_ballot = Ballot::with(l.round.n, l.pid);
         self.leader = Some(leader_ballot);
@@ -120,8 +120,7 @@ impl MultiPaxosLeaderComp {
             // got a new leader with greater ballot
             self.quick_timeout = false;
             self.leader = Some(top_ballot);
-            let top_pid = top_ballot.pid;
-            self.ble_port.trigger(Leader::with(top_pid, top_ballot));
+            self.ble_port.trigger(top_ballot);
         }
     }
 
@@ -274,7 +273,7 @@ impl Actor for MultiPaxosLeaderComp {
                                 self.quick_timeout = false;
                                 self.leader = Some(rep.current_leader);
                                 let top_pid = rep.current_leader.pid;
-                                self.ble_port.trigger(Leader::with(top_pid, rep.current_leader));
+                                self.ble_port.trigger(rep.current_leader);
                             }
                         } else {
                             trace!(self.ctx.log(), "Got late hb reply. HB delay: {}", self.hb_delay);

@@ -4,7 +4,6 @@ use super::{
     super::*,
     paxos::PaxosComp,
     raft::RaftComp,
-    storage::paxos::{MemorySequence, MemoryState},
 };
 use crate::bench::atomic_broadcast::{
     paxos::{LeaderElection, PaxosCompMsg},
@@ -66,8 +65,8 @@ fn get_deser_clientparams_and_subdir(s: &str) -> (ClientParamsDeser, String) {
 
 pub struct AtomicBroadcastClient {
     system: Option<KompactSystem>,
-    paxos_comp: Option<Arc<Component<PaxosComp<MemorySequence, MemoryState>>>>,
-    raft_comp: Option<Arc<Component<RaftComp<MemStorage>>>>,
+    paxos_comp: Option<Arc<Component<PaxosComp<EntryType, SnapshotType, PaxosStorageType>>>>,
+    raft_comp: Option<Arc<Component<RaftComp<EntryType, MemStorage>>>>,
 }
 
 impl AtomicBroadcastClient {
@@ -126,7 +125,7 @@ impl DistributedBenchmarkClient for AtomicBroadcastClient {
                 let pv_qc = r == "raft_pv_qc";
                 /*** Setup RaftComp ***/
                 let (raft_comp, unique_reg_f) = system.create_and_register(|| {
-                    RaftComp::<MemStorage>::with(initial_config, experiment_params, pv_qc)
+                    RaftComp::<EntryType, MemStorage>::with(initial_config, experiment_params, pv_qc)
                 });
                 unique_reg_f.wait_expect(REGISTER_TIMEOUT, "RaftComp failed to register!");
                 let self_path = system

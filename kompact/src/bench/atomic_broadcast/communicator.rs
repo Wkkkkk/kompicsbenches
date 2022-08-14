@@ -1,11 +1,11 @@
 extern crate raft as tikv_raft;
 
-#[cfg(feature = "measure_io")]
+use std::marker::PhantomData;
+// #[cfg(feature = "measure_io")]
 use crate::bench::atomic_broadcast::util::exp_util::*;
 #[cfg(feature = "measure_io")]
 use crate::bench::atomic_broadcast::util::io_metadata::IOMetaData;
 use crate::bench::atomic_broadcast::{
-    ble::Ballot,
     messages::{
         paxos::{PaxosMsgWrapper, PaxosSer},
         raft::{RaftMsg, RawRaftSer},
@@ -14,41 +14,42 @@ use crate::bench::atomic_broadcast::{
 };
 use hashbrown::HashMap;
 use kompact::prelude::*;
-use omnipaxos::messages::Message as RawPaxosMsg;
+use omnipaxos_core::messages::Message as RawPaxosMsg;
 
 #[cfg(feature = "measure_io")]
 use omnipaxos::messages::PaxosMsg;
 #[cfg(feature = "measure_io")]
 use std::time::SystemTime;
+use omnipaxos_core::ballot_leader_election::Ballot;
 use tikv_raft::prelude::Message as RawRaftMsg;
 
 #[derive(Clone, Debug)]
-pub enum AtomicBroadcastCompMsg {
+pub enum AtomicBroadcastCompMsg<T: LogCommand, S: LogSnapshot<T>> {
     RawRaftMsg(RawRaftMsg),
-    RawPaxosMsg(RawPaxosMsg<Ballot>),
+    RawPaxosMsg(RawPaxosMsg<T, S>),
     StopMsg(u64),
 }
 
 #[derive(Clone, Debug)]
-pub enum CommunicatorMsg {
+pub enum CommunicatorMsg<T: LogCommand, S: LogSnapshot<T>> {
     RawRaftMsg(RawRaftMsg),
-    RawPaxosMsg(RawPaxosMsg<Ballot>),
-    ProposalResponse(ProposalResp),
+    RawPaxosMsg(RawPaxosMsg<T, S>),
+    ProposalResponse(ProposalResp<T>),
     ReconfigurationResponse(ReconfigurationResp),
     SendStop(u64, bool),
 }
 
-pub struct CommunicationPort;
+pub struct CommunicationPort<T: LogCommand, S: LogSnapshot<T>> { _p: PhantomData<(T, S)> }
 
-impl Port for CommunicationPort {
-    type Indication = AtomicBroadcastCompMsg;
-    type Request = CommunicatorMsg;
+impl<T: LogCommand, S: LogSnapshot<T>> Port for CommunicationPort<T, S> {
+    type Indication = AtomicBroadcastCompMsg<T, S>;
+    type Request = CommunicatorMsg<T, S>;
 }
 
 #[derive(ComponentDefinition)]
-pub struct Communicator {
-    ctx: ComponentContext<Communicator>,
-    atomic_broadcast_port: ProvidedPort<CommunicationPort>,
+pub struct Communicator<T: LogCommand, S: LogSnapshot<T>> {
+    ctx: ComponentContext<Communicator<T, S>>,
+    atomic_broadcast_port: ProvidedPort<CommunicationPort<T, S>>,
     pub(crate) peers: HashMap<u64, ActorPath>, // node id -> actorpath
     client: ActorPath,                         // cached client to send SequenceResp to
     #[cfg(feature = "measure_io")]
@@ -59,8 +60,8 @@ pub struct Communicator {
     disconnected_peers: Vec<u64>,
 }
 
-impl Communicator {
-    pub fn with(peers: HashMap<u64, ActorPath>, client: ActorPath) -> Communicator {
+impl<T: LogCommand, S: LogSnapshot<T>> Communicator<T, S> {
+    pub fn with(peers: HashMap<u64, ActorPath>, client: ActorPath) -> Communicator<T, S> {
         Communicator {
             ctx: ComponentContext::uninitialised(),
             atomic_broadcast_port: ProvidedPort::uninitialised(),
@@ -86,7 +87,7 @@ impl Communicator {
     }
 
     #[cfg(feature = "measure_io")]
-    fn update_sent_io_metadata(&mut self, msg: &CommunicatorMsg) {
+    fn update_sent_io_metadata(&mut self, msg: &CommunicatorMsg<T, S>) {
         match msg {
             CommunicatorMsg::RawRaftMsg(rm) => {
                 let est_size = Self::estimate_raft_msg_size(rm);
@@ -105,6 +106,7 @@ impl Communicator {
         std::mem::take(&mut self.io_windows)
     }
 
+    /*
     #[cfg(feature = "measure_io")]
     fn estimate_paxos_msg_size(pm: &RawPaxosMsg<Ballot>) -> usize {
         let num_entries = match &pm.msg {
@@ -116,6 +118,7 @@ impl Communicator {
         };
         num_entries * DATA_SIZE + std::mem::size_of_val(pm)
     }
+    */
 
     #[cfg(feature = "measure_io")]
     fn estimate_raft_msg_size(rm: &RawRaftMsg) -> usize {
@@ -147,7 +150,7 @@ impl Communicator {
     }
 }
 
-impl ComponentLifecycle for Communicator {
+impl<T: LogCommand, S: LogSnapshot<T>> ComponentLifecycle for Communicator<T, S> {
     fn on_start(&mut self) -> Handled {
         #[cfg(feature = "measure_io")]
         {
@@ -163,8 +166,10 @@ impl ComponentLifecycle for Communicator {
     }
 }
 
-impl Provide<CommunicationPort> for Communicator {
-    fn handle(&mut self, msg: CommunicatorMsg) -> Handled {
+impl<T: LogCommand, S: LogSnapshot<T>> Provide<CommunicationPort<T, S>> for Communicator<T, S> {
+    fn handle(&mut self, msg: CommunicatorMsg<T, S>) -> Handled {
+        todo!()
+        /*
         #[cfg(feature = "measure_io")]
         self.update_sent_io_metadata(&msg);
         match msg {
@@ -225,10 +230,11 @@ impl Provide<CommunicationPort> for Communicator {
             }
         }
         Handled::Ok
+         */
     }
 }
 
-impl Actor for Communicator {
+impl<T: LogCommand, S: LogSnapshot<T>> Actor for Communicator<T, S> {
     type Message = ();
 
     #[allow(unused_variables)]
@@ -237,6 +243,8 @@ impl Actor for Communicator {
     }
 
     fn receive_network(&mut self, m: NetMessage) -> Handled {
+        todo!()
+        /*
         let NetMessage { data, .. } = m;
         match_deser! {data {
             msg(r): RawRaftMsg [using RawRaftSer] => {
@@ -273,5 +281,7 @@ impl Actor for Communicator {
         }
         }
         Handled::Ok
+
+         */
     }
 }

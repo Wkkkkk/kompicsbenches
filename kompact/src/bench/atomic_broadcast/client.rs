@@ -206,7 +206,7 @@ impl Client {
             )
         );
         let rp = ReconfigurationProposal::with(*policy, reconfig.clone());
-        node.tell_serialised(AtomicBroadcastMsg::ReconfigurationProposal(rp), self)
+        node.tell_serialised(AtomicBroadcastMsg::<EntryType>::ReconfigurationProposal(rp), self)
             .expect("Should serialise reconfig Proposal");
         #[cfg(feature = "track_timeouts")]
         {
@@ -676,7 +676,7 @@ impl Actor for Client {
             data,
         } = m;
         match_deser! {data {
-            msg(am): AtomicBroadcastMsg [using AtomicBroadcastDeser] => {
+            msg(am): AtomicBroadcastMsg<EntryType> [using AtomicBroadcastDeser] => {
                 // info!(self.ctx.log(), "Handling {:?}", am);
                 match am {
                     AtomicBroadcastMsg::Leader(pid, round) if self.state == ExperimentState::Setup => {

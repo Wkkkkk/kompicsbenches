@@ -292,6 +292,15 @@ dependencies = [
 ]
 
 [[package]]
+name = "bincode"
+version = "1.3.3"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "b1f45e9417d87227c7a56d22e471c6206462cba514c7590c09aff4cf6d1ddcad"
+dependencies = [
+ "serde",
+]
+
+[[package]]
 name = "bitfields"
 version = "0.2.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -1209,6 +1218,7 @@ name = "kompact_benchmarks"
 version = "0.1.0"
 dependencies = [
  "benchmark_suite_shared",
+ "bincode",
  "chrono",
  "futures 0.1.31",
  "futures-cpupool",
@@ -1220,13 +1230,14 @@ dependencies = [
  "kompact",
  "memmap",
  "num_cpus",
- "omnipaxos",
+ "omnipaxos_core",
  "parse_duration",
  "pretty-bytes",
  "protobuf",
  "quanta",
  "raft",
  "rand 0.7.3",
+ "serde",
  "slog",
  "synchronoise",
  "time",
@@ -1539,9 +1550,9 @@ dependencies = [
 ]
 
 [[package]]
-name = "omnipaxos"
+name = "omnipaxos_core"
 version = "0.1.0"
-source = "git+https://github.com/haraldng/omnipaxos?branch=kompicsbenches-exp#1de0a3fbf2f6790e7ff55adf756b6835e5acd837"
+source = "git+https://github.com/haraldng/omnipaxos#4852af2c2a65b48a7aab4120a245b4e28a450bc6"
 
 [[package]]
 name = "once_cell"
@@ -2190,6 +2201,20 @@ name = "serde"
 version = "1.0.130"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "f12d06de37cf59146fbdecab66aa99f9fe4f78722e3607577a5375d66bd0c913"
+dependencies = [
+ "serde_derive",
+]
+
+[[package]]
+name = "serde_derive"
+version = "1.0.130"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "d7bc1a1ab1961464eae040d96713baa5a724a8152c1222492465b54322ec508b"
+dependencies = [
+ "proc-macro2 1.0.29",
+ "quote 1.0.9",
+ "syn 1.0.76",
+]
 
 [[package]]
 name = "serde_path_to_error"

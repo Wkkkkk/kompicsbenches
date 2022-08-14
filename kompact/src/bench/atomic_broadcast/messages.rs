@@ -4,6 +4,8 @@ use crate::{bench::atomic_broadcast::benchmark_master::ReconfigurationPolicy, se
 use kompact::prelude::*;
 use protobuf::{parse_from_bytes, Message};
 use rand::Rng;
+use crate::bench::atomic_broadcast::util::exp_util::LogCommand;
+use serde::{Serialize, de::DeserializeOwned};
 
 pub mod raft {
     extern crate raft as tikv_raft;
@@ -60,14 +62,15 @@ pub mod raft {
 }
 
 pub mod paxos {
-    use crate::{bench::atomic_broadcast::ble::Ballot, serialiser_ids};
+    use crate::{serialiser_ids};
     use kompact::prelude::{Any, Buf, BufMut, Deserialiser, SerError, Serialisable};
-    use omnipaxos::{
-        leader_election::Leader,
+    use omnipaxos_core::{
+        ballot_leader_election::Ballot,
         messages::*,
-        storage::{Entry, StopSign},
     };
     use std::{fmt::Debug, ops::Deref};
+    use std::marker::PhantomData;
+    use crate::bench::atomic_broadcast::util::exp_util::{LogCommand, SnapshotType};
 
     const PREPARE_ID: u8 = 1;
     const PROMISE_ID: u8 = 2;
@@ -87,15 +90,18 @@ pub mod paxos {
     // const DATA_SIZE: usize = 8;
     // const ENTRY_OVERHEAD: usize = 21 + DATA_SIZE;
 
-    pub struct PaxosSer;
+    pub struct PaxosSer<T: LogCommand> { _p: PhantomData<T> }
 
-    impl PaxosSer {
+    impl<T: LogCommand> PaxosSer<T> {
+        
         fn serialise_ballot(ballot: &Ballot, buf: &mut dyn BufMut) {
             buf.put_u32(ballot.n);
             buf.put_u64(ballot.pid);
         }
 
-        fn serialise_entry(e: &Entry<Ballot>, buf: &mut dyn BufMut) {
+        fn serialise_entry(e: &T, buf: &mut dyn BufMut) {
+            todo!()
+            /*
             match e {
                 Entry::Normal(d) => {
                     buf.put_u8(NORMAL_ENTRY_ID);
@@ -118,9 +124,11 @@ pub mod paxos {
                     }
                 }
             }
+            
+             */
         }
 
-        pub(crate) fn serialise_entries(ents: &[Entry<Ballot>], buf: &mut dyn BufMut) {
+        pub(crate) fn serialise_entries(ents: &[T], buf: &mut dyn BufMut) {
             buf.put_u32(ents.len() as u32);
             for e in ents {
                 Self::serialise_entry(e, buf);
@@ -130,10 +138,12 @@ pub mod paxos {
         fn deserialise_ballot(buf: &mut dyn Buf) -> Ballot {
             let n = buf.get_u32();
             let pid = buf.get_u64();
-            Ballot::with(n, pid)
+            Ballot::with(n, 0, pid)
         }
 
-        fn deserialise_entry(buf: &mut dyn Buf) -> Entry<Ballot> {
+        fn deserialise_entry(buf: &mut dyn Buf) -> T {
+            todo!()
+            /*
             match buf.get_u8() {
                 NORMAL_ENTRY_ID => {
                     let data_len = buf.get_u32() as usize;
@@ -161,9 +171,11 @@ pub mod paxos {
                 }
                 error_id => panic!("Got unexpected id in deserialise_entry: {}", error_id),
             }
+            
+             */
         }
 
-        pub fn deserialise_entries(buf: &mut dyn Buf) -> Vec<Entry<Ballot>> {
+        pub fn deserialise_entries(buf: &mut dyn Buf) -> Vec<T> {
             let len = buf.get_u32();
             let mut ents = Vec::with_capacity(len as usize);
             for _ in 0..len {
@@ -174,17 +186,17 @@ pub mod paxos {
     }
 
     #[derive(Clone, Debug)]
-    pub struct PaxosMsgWrapper(pub Message<Ballot>);
+    pub struct PaxosMsgWrapper<T: LogCommand>(pub Message<T, SnapshotType>);
 
-    impl Deref for PaxosMsgWrapper {
-        type Target = Message<Ballot>;
+    impl<T: LogCommand> Deref for PaxosMsgWrapper<T> {
+        type Target = Message<T, SnapshotType>;
 
         fn deref(&self) -> &Self::Target {
             &self.0
         }
     }
 
-    impl Serialisable for PaxosMsgWrapper {
+    impl<T: LogCommand>  Serialisable for PaxosMsgWrapper<T> {
         fn ser_id(&self) -> u64 {
             serialiser_ids::PAXOS_ID
         }
@@ -194,6 +206,8 @@ pub mod paxos {
         }
 
         fn serialise(&self, buf: &mut dyn BufMut) -> Result<(), SerError> {
+            todo!()
+            /*
             buf.put_u64(self.from);
             buf.put_u64(self.to);
             match &self.msg {
@@ -213,6 +227,15 @@ pub mod paxos {
                     buf.put_u64(p.la);
                     PaxosSer::serialise_ballot(&p.n, buf);
                     PaxosSer::serialise_ballot(&p.n_accepted, buf);
+                    if let Some(x) = &p.sync_item {
+                        match x {
+                            SyncItem::Entries(ents) => {
+                                buf.put_slice(ents.as_slice())
+                            }
+                            SyncItem::Snapshot(_) => {}
+                            SyncItem::None => {}
+                        }
+                    }
                     PaxosSer::serialise_entries(&p.sfx, buf);
                 }
                 PaxosMsg::AcceptSync(acc_sync) => {
@@ -246,8 +269,11 @@ pub mod paxos {
                     buf.put_u8(PROPOSALFORWARD_ID);
                     PaxosSer::serialise_entries(entries, buf);
                 }
+                _ => todo!("Other message types")
             }
             Ok(())
+            
+             */
         }
 
         fn local(self: Box<Self>) -> Result<Box<dyn Any + Send>, Box<dyn Serialisable>> {
@@ -255,10 +281,12 @@ pub mod paxos {
         }
     }
 
-    impl Deserialiser<Message<Ballot>> for PaxosSer {
+    impl<T: LogCommand> Deserialiser<Message<T, SnapshotType>> for PaxosSer<T> {
         const SER_ID: u64 = serialiser_ids::PAXOS_ID;
 
-        fn deserialise(buf: &mut dyn Buf) -> Result<Message<Ballot>, SerError> {
+        fn deserialise(buf: &mut dyn Buf) -> Result<Message<T, SnapshotType>, SerError> {
+            todo!()
+            /*
             let from = buf.get_u64();
             let to = buf.get_u64();
             let msg = match buf.get_u8() {
@@ -324,6 +352,8 @@ pub mod paxos {
                 }
             };
             Ok(msg)
+          
+             */
         }
     }
 
@@ -340,13 +370,13 @@ pub mod paxos {
     }
 
     #[derive(Clone, Debug)]
-    pub struct SequenceSegment {
+    pub struct SequenceSegment<T: LogCommand> {
         idx: SegmentIndex,
-        pub entries: Vec<Entry<Ballot>>,
+        pub entries: Vec<T>,
     }
 
-    impl SequenceSegment {
-        pub fn with(idx: SegmentIndex, entries: Vec<Entry<Ballot>>) -> SequenceSegment {
+    impl<T: LogCommand> SequenceSegment<T> {
+        pub fn with(idx: SegmentIndex, entries: Vec<T>) -> Self {
             SequenceSegment { idx, entries }
         }
 
@@ -376,25 +406,27 @@ pub mod paxos {
     }
 
     #[derive(Clone, Debug)]
-    pub struct SegmentTransfer {
+    pub struct SegmentTransfer<T: LogCommand>  {
         pub config_id: u32,
         pub succeeded: bool,
         pub metadata: SequenceMetaData,
-        pub segment: SequenceSegment,
+        pub segment: SequenceSegment<T>,
+        _p: PhantomData<T>
     }
 
-    impl SegmentTransfer {
+    impl<T: LogCommand> SegmentTransfer<T> {
         pub fn with(
             config_id: u32,
             succeeded: bool,
             metadata: SequenceMetaData,
-            segment: SequenceSegment,
-        ) -> SegmentTransfer {
+            segment: SequenceSegment<T>,
+        ) -> Self {
             SegmentTransfer {
                 config_id,
                 succeeded,
                 metadata,
                 segment,
+                _p: PhantomData
             }
         }
     }
@@ -441,10 +473,10 @@ pub mod paxos {
     }
 
     #[derive(Clone, Debug)]
-    pub enum ReconfigurationMsg {
+    pub enum ReconfigurationMsg<T: LogCommand> {
         Init(ReconfigInit),
         SegmentRequest(SegmentRequest),
-        SegmentTransfer(SegmentTransfer),
+        SegmentTransfer(SegmentTransfer<T>),
     }
 
     #[derive(Clone, Debug)]
@@ -453,7 +485,7 @@ pub mod paxos {
         pub nodes: Reconfig,
         pub seq_metadata: SequenceMetaData,
         pub from: u64,
-        pub skip_prepare_use_leader: Option<Leader<Ballot>>,
+        pub skip_prepare_use_leader: Option<Ballot>,
     }
 
     impl ReconfigInit {
@@ -462,7 +494,7 @@ pub mod paxos {
             nodes: Reconfig,
             seq_metadata: SequenceMetaData,
             from: u64,
-            skip_prepare_use_leader: Option<Leader<Ballot>>,
+            skip_prepare_use_leader: Option<Ballot>,
         ) -> ReconfigInit {
             ReconfigInit {
                 config_id,
@@ -480,7 +512,7 @@ pub mod paxos {
 
     pub struct ReconfigSer;
 
-    impl Serialisable for ReconfigurationMsg {
+    impl<T: LogCommand>  Serialisable for ReconfigurationMsg<T> {
         fn ser_id(&self) -> u64 {
             serialiser_ids::RECONFIG_ID
         }
@@ -490,6 +522,8 @@ pub mod paxos {
         }
 
         fn serialise(&self, buf: &mut dyn BufMut) -> Result<(), SerError> {
+            todo!()
+            /*
             match self {
                 ReconfigurationMsg::Init(r) => {
                     buf.put_u8(RECONFIG_INIT_ID);
@@ -533,16 +567,18 @@ pub mod paxos {
                 }
             }
             Ok(())
+            
+             */
         }
 
         fn local(self: Box<Self>) -> Result<Box<dyn Any + Send>, Box<dyn Serialisable>> {
             Ok(self)
         }
     }
-    impl Deserialiser<ReconfigurationMsg> for ReconfigSer {
+    impl<T: LogCommand>  Deserialiser<ReconfigurationMsg<T>> for ReconfigSer {
         const SER_ID: u64 = serialiser_ids::RECONFIG_ID;
 
-        fn deserialise(buf: &mut dyn Buf) -> Result<ReconfigurationMsg, SerError> {
+        fn deserialise(buf: &mut dyn Buf) -> Result<ReconfigurationMsg<T>, SerError> {
             match buf.get_u8() {
                 RECONFIG_INIT_ID => {
                     let config_id = buf.get_u32();
@@ -561,9 +597,9 @@ pub mod paxos {
                     }
                     let skip_prepare_use_leader = match buf.get_u8() {
                         1 => {
-                            let leader_pid = buf.get_u64();
-                            let ballot = PaxosSer::deserialise_ballot(buf);
-                            Some(Leader::with(leader_pid, ballot))
+                            todo!()
+                            // let ballot = PaxosSer::deserialise_ballot(buf);
+                            // Some(ballot)
                         }
                         _ => None,
                     };
@@ -610,8 +646,8 @@ pub mod paxos {
     }
 
     pub mod ballot_leader_election {
+        use omnipaxos_core::ballot_leader_election::Ballot;
         use super::super::*;
-        use crate::bench::atomic_broadcast::ble::Ballot;
 
         #[derive(Clone, Debug)]
         pub enum HeartbeatMsg {
@@ -701,7 +737,7 @@ pub mod paxos {
                         let round = buf.get_u32();
                         let n = buf.get_u32();
                         let pid = buf.get_u64();
-                        let ballot = Ballot::with(n, pid);
+                        let ballot = Ballot::with(n, 0, pid);
                         let candidate = if buf.get_u8() < 1 { false } else { true };
                         let hb_rep = HeartbeatReply::with(round, ballot, candidate);
                         Ok(HeartbeatMsg::Reply(hb_rep))
@@ -715,8 +751,8 @@ pub mod paxos {
     }
 
     pub mod vr_leader_election {
+        use omnipaxos_core::ballot_leader_election::Ballot;
         use super::super::*;
-        use crate::bench::atomic_broadcast::ble::Ballot;
 
         #[derive(Clone, Debug)]
         pub enum VRMsg {
@@ -769,14 +805,14 @@ pub mod paxos {
                     START_VIEWCHANGE_ID => {
                         let n = buf.get_u32();
                         let pid = buf.get_u64();
-                        let b = Ballot::with(n, pid);
+                        let b = Ballot::with(n, 0, pid);
                         let from = buf.get_u64();
                         Ok(VRMsg::StartViewChange(b, from))
                     }
                     DO_VIEWCHANGE_ID => {
                         let n = buf.get_u32();
                         let pid = buf.get_u64();
-                        let b = Ballot::with(n, pid);
+                        let b = Ballot::with(n, 0, pid);
                         let from = buf.get_u64();
                         Ok(VRMsg::DoViewChange(b, from))
                     }
@@ -789,8 +825,8 @@ pub mod paxos {
     }
 
     pub mod mp_leader_election {
+        use omnipaxos_core::ballot_leader_election::Ballot;
         use super::super::*;
-        use crate::bench::atomic_broadcast::ble::Ballot;
 
         #[derive(Clone, Debug)]
         pub enum HeartbeatMsg {
@@ -877,10 +913,10 @@ pub mod paxos {
                         let round = buf.get_u32();
                         let n = buf.get_u32();
                         let pid = buf.get_u64();
-                        let ballot = Ballot::with(n, pid);
+                        let ballot = Ballot::with(n, 0, pid);
                         let n = buf.get_u32();
                         let pid = buf.get_u64();
-                        let current_leader = Ballot::with(n, pid);
+                        let current_leader = Ballot::with(n, 0, pid);
                         let hb_rep = HeartbeatReply::with(round, ballot, current_leader);
                         Ok(HeartbeatMsg::Reply(hb_rep))
                     }
@@ -900,12 +936,12 @@ pub struct Run;
 pub const RECONFIG_ID: u64 = 0;
 
 #[derive(Clone, Debug)]
-pub struct Proposal {
-    pub data: Vec<u8>,
+pub struct Proposal<T: LogCommand> {
+    pub data: T,
 }
 
-impl Proposal {
-    pub fn with(data: Vec<u8>) -> Self {
+impl<T: LogCommand> Proposal<T> {
+    pub fn with(data: T) -> Self {
         Proposal { data }
     }
 }
@@ -951,15 +987,15 @@ impl ReconfigurationProposal {
 }
 
 #[derive(Clone, Debug)]
-pub struct ProposalResp {
-    pub data: Vec<u8>,
+pub struct ProposalResp<T: LogCommand> {
+    pub data: T,
     pub latest_leader: u64,
     pub leader_round: u64,
 }
 
-impl ProposalResp {
-    pub fn with(data: Vec<u8>, latest_leader: u64, leader_round: u64) -> ProposalResp {
-        ProposalResp {
+impl<T: LogCommand> ProposalResp<T> {
+    pub fn with(data: T, latest_leader: u64, leader_round: u64) -> Self {
+        Self {
             data,
             latest_leader,
             leader_round,
@@ -985,10 +1021,10 @@ impl ReconfigurationResp {
 }
 
 #[derive(Clone, Debug)]
-pub enum AtomicBroadcastMsg {
-    Proposal(Proposal),
+pub enum AtomicBroadcastMsg<T: LogCommand> {
+    Proposal(Proposal<T>),
     ReconfigurationProposal(ReconfigurationProposal),
-    ProposalResp(ProposalResp),
+    ProposalResp(ProposalResp<T>),
     ReconfigurationResp(ReconfigurationResp),
     Leader(u64, u64), // pid, round
 }
@@ -1003,7 +1039,71 @@ const RECONFIGRESP_ID: u8 = 5;
 const REPLACELEADER_ID: u8 = 1;
 const REPLACEFOLLOWER_ID: u8 = 2;
 
-impl Serialisable for AtomicBroadcastMsg {
+impl<T: LogCommand> Serialisable for AtomicBroadcastMsg<T> {
+    fn ser_id(&self) -> u64 {
+        serialiser_ids::ATOMICBCAST_ID
+    }
+
+    fn size_hint(&self) -> Option<usize> {
+        None
+    }
+
+    fn serialise(&self, buf: &mut dyn BufMut) -> Result<(), SerError> {
+        match self {
+            AtomicBroadcastMsg::Proposal(p) => {
+                buf.put_u8(PROPOSAL_ID);
+                let data = bincode::serialize(&p.data).expect("Failed to serialize data");
+                let data_len = data.len() as u32;
+                buf.put_u32(data_len);
+                buf.put_slice(data.as_slice());
+            }
+            AtomicBroadcastMsg::ReconfigurationProposal(rp) => {
+                buf.put_u8(RECONFIGPROP_ID);
+                match rp.policy {
+                    ReconfigurationPolicy::ReplaceFollower => buf.put_u8(REPLACEFOLLOWER_ID),
+                    ReconfigurationPolicy::ReplaceLeader => buf.put_u8(REPLACELEADER_ID),
+                }
+                buf.put_u32(rp.new_nodes.len() as u32);
+                for node in &rp.new_nodes {
+                    buf.put_u64(*node);
+                }
+            }
+            AtomicBroadcastMsg::ProposalResp(pr) => {
+                buf.put_u8(PROPOSALRESP_ID);
+                buf.put_u64(pr.latest_leader);
+                buf.put_u64(pr.leader_round);
+                let data = bincode::serialize(&pr.data).expect("Failed to serialize data");
+                let data_len = data.len() as u32;
+                buf.put_u32(data_len);
+                buf.put_slice(data.as_slice());
+            }
+            AtomicBroadcastMsg::ReconfigurationResp(rr) => {
+                buf.put_u8(RECONFIGRESP_ID);
+                buf.put_u64(rr.latest_leader);
+                buf.put_u64(rr.leader_round);
+                let config_len: u32 = rr.current_configuration.len() as u32;
+                buf.put_u32(config_len);
+                for node in &rr.current_configuration {
+                    buf.put_u64(*node);
+                }
+            }
+            AtomicBroadcastMsg::Leader(pid, round) => {
+                buf.put_u8(LEADER_ID);
+                buf.put_u64(*pid);
+                buf.put_u64(*round);
+            }
+        }
+        Ok(())
+    }
+
+    fn local(self: Box<Self>) -> Result<Box<dyn Any + Send>, Box<dyn Serialisable>> {
+        Ok(self)
+    }
+}
+
+
+/*
+impl Serialisable for AtomicBroadcastMsg<Vec<u8>> {
     fn ser_id(&self) -> u64 {
         serialiser_ids::ATOMICBCAST_ID
     }
@@ -1064,20 +1164,23 @@ impl Serialisable for AtomicBroadcastMsg {
         Ok(self)
     }
 }
-
+*/
 pub struct AtomicBroadcastDeser;
 
-impl Deserialiser<AtomicBroadcastMsg> for AtomicBroadcastDeser {
+impl<T: LogCommand> Deserialiser<AtomicBroadcastMsg<T>> for AtomicBroadcastDeser {
     const SER_ID: u64 = serialiser_ids::ATOMICBCAST_ID;
 
-    fn deserialise(buf: &mut dyn Buf) -> Result<AtomicBroadcastMsg, SerError> {
+    fn deserialise(buf: &mut dyn Buf) -> Result<AtomicBroadcastMsg<T>, SerError> {
         match buf.get_u8() {
             PROPOSAL_ID => {
+                todo!()
+                /*
                 let data_len = buf.get_u32() as usize;
                 let mut data = vec![0; data_len];
                 buf.copy_to_slice(&mut data);
                 let proposal = Proposal::with(data);
                 Ok(AtomicBroadcastMsg::Proposal(proposal))
+                */
             }
             RECONFIGPROP_ID => {
                 let policy = match buf.get_u8() {
@@ -1099,6 +1202,8 @@ impl Deserialiser<AtomicBroadcastMsg> for AtomicBroadcastDeser {
                 Ok(AtomicBroadcastMsg::ReconfigurationProposal(rp))
             }
             PROPOSALRESP_ID => {
+                todo!()
+                /*
                 let latest_leader = buf.get_u64();
                 let leader_round = buf.get_u64();
                 let data_len = buf.get_u32() as usize;
@@ -1110,6 +1215,8 @@ impl Deserialiser<AtomicBroadcastMsg> for AtomicBroadcastDeser {
                     leader_round,
                 };
                 Ok(AtomicBroadcastMsg::ProposalResp(pr))
+
+                 */
             }
             LEADER_ID => {
                 let pid = buf.get_u64();
