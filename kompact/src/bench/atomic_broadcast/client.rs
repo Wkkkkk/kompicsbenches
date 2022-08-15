@@ -1,6 +1,5 @@
 use super::messages::{
     AtomicBroadcastDeser, AtomicBroadcastMsg, Proposal, StopMsg as NetStopMsg, StopMsgDeser,
-    RECONFIG_ID,
 };
 #[cfg(feature = "simulate_partition")]
 use crate::bench::atomic_broadcast::messages::PartitioningExpMsg;
@@ -37,17 +36,23 @@ pub enum LocalClientMessage {
 #[derive(Debug)]
 struct ProposalMetaData {
     start_time: Option<Instant>,
-    timer: ScheduledTimer,
+    // timer: ScheduledTimer,
 }
 
 impl ProposalMetaData {
+    fn with(start_time: Option<Instant>) -> ProposalMetaData {
+        ProposalMetaData { start_time }
+    }
+
+    /*
     fn with(start_time: Option<Instant>, timer: ScheduledTimer) -> ProposalMetaData {
         ProposalMetaData { start_time, timer }
     }
 
+
     fn set_timer(&mut self, timer: ScheduledTimer) {
         self.timer = timer;
-    }
+    }*/
 }
 
 #[derive(Debug)]
@@ -84,19 +89,19 @@ impl MetaResults {
 }
 
 #[derive(ComponentDefinition)]
-pub struct Client {
+pub struct Client<T: LogCommand> {
     ctx: ComponentContext<Self>,
     num_proposals: u64,
     num_concurrent_proposals: u64,
+    num_proposals_sent: u64,
     nodes: HashMap<u64, ActorPath>,
     network_scenario: NetworkScenario,
     reconfig: Option<(ReconfigurationPolicy, Vec<u64>)>,
     leader_election_latch: Arc<CountdownEvent>,
     finished_latch: Arc<CountdownEvent>,
-    latest_proposal_id: u64,
-    max_proposal_id: u64,
-    responses: HashMap<u64, Option<Duration>>,
-    pending_proposals: HashMap<u64, ProposalMetaData>,
+    responses: HashMap<T::Response, Option<Duration>>,
+    pending_responses: HashMap<T::Response, ProposalMetaData>,
+    pending_reconfig: Option<ProposalMetaData>,
     timeout: Duration,
     current_leader: u64,
     leader_round: u64,
@@ -128,7 +133,7 @@ pub struct Client {
     recover_periodic_partition: bool,
 }
 
-impl Client {
+impl<T: LogCommand> Client<T> {
     pub fn with(
         initial_config: Vec<u64>,
         num_proposals: u64,
@@ -140,21 +145,21 @@ impl Client {
         preloaded_log_size: u64,
         leader_election_latch: Arc<CountdownEvent>,
         finished_latch: Arc<CountdownEvent>,
-    ) -> Client {
+    ) -> Self {
         let clock = Clock::new();
-        Client {
+        Self {
             ctx: ComponentContext::uninitialised(),
-            num_proposals,
+            num_proposals: num_proposals + preloaded_log_size,
             num_concurrent_proposals,
+            num_proposals_sent: preloaded_log_size,
             nodes,
             network_scenario,
             reconfig,
             leader_election_latch,
             finished_latch,
-            latest_proposal_id: preloaded_log_size,
-            max_proposal_id: num_proposals + preloaded_log_size,
             responses: HashMap::with_capacity(num_proposals as usize),
-            pending_proposals: HashMap::with_capacity(num_concurrent_proposals as usize),
+            pending_responses: HashMap::with_capacity(num_concurrent_proposals as usize),
+            pending_reconfig: None,
             timeout,
             current_leader: 0,
             leader_round: 0,
@@ -186,13 +191,19 @@ impl Client {
         }
     }
 
-    fn propose_normal(&self, id: u64) {
-        let leader = self.nodes.get(&self.current_leader).unwrap();
-        let data = create_raw_proposal(id);
+    fn create_proposal_data(&mut self) -> T {
+        todo!()
+    }
+
+    fn propose_normal(&mut self) -> T::Response {
+        let data: T = self.create_proposal_data();
+        let response = data.create_response();
         let p = Proposal::with(data);
+        let leader = self.nodes.get(&self.current_leader).unwrap();
         leader
             .tell_serialised(AtomicBroadcastMsg::Proposal(p), self)
             .expect("Should serialise Proposal");
+        response
     }
 
     fn propose_reconfiguration(&self, node: &ActorPath) {
@@ -211,20 +222,21 @@ impl Client {
         #[cfg(feature = "track_timeouts")]
         {
             info!(self.ctx.log(), "Proposed reconfiguration. latest_proposal_id: {}, timed_out: {}, pending proposals: {}, min: {:?}, max: {:?}",
-                self.latest_proposal_id, self.num_timed_out, self.pending_proposals.len(), self.pending_proposals.keys().min(), self.pending_proposals.keys().max());
+                self.
+                , self.num_timed_out, self.pending_proposals.len(), self.pending_proposals.keys().min(), self.pending_proposals.keys().max());
         }
     }
 
     fn send_concurrent_proposals(&mut self) {
-        let num_inflight = self.pending_proposals.len() as u64;
+        let num_inflight = self.pending_responses.len() as u64;
         if num_inflight == self.num_concurrent_proposals || self.current_leader == 0 {
             return;
         }
         let available_n = self.num_concurrent_proposals - num_inflight;
-        let from = self.latest_proposal_id + 1;
-        let i = self.latest_proposal_id + available_n;
-        let to = if i > self.max_proposal_id {
-            self.max_proposal_id
+        let from = self.num_proposals_sent + 1;
+        let i = self.num_proposals_sent + available_n;
+        let to = if i > self.num_proposals {
+            self.num_proposals
         } else {
             i
         };
@@ -233,26 +245,26 @@ impl Client {
         }
         let cache_start_time =
             self.num_concurrent_proposals == 1 || cfg!(feature = "track_latency");
-        for id in from..=to {
+        for _ in from..=to {
             let current_time = match cache_start_time {
                 true => Some(self.clock.now()),
                 _ => None,
             };
-            self.propose_normal(id);
-            let timer = self.schedule_once(self.timeout, move |c, _| c.proposal_timeout(id));
-            let proposal_meta = ProposalMetaData::with(current_time, timer);
-            self.pending_proposals.insert(id, proposal_meta);
+            let pending_response: T::Response = self.propose_normal();
+            // let timer = self.schedule_once(self.timeout, move |c, _| c.proposal_timeout(id));    // TODO How to handle timeouts?
+            let proposal_meta = ProposalMetaData::with(current_time);
+            self.pending_responses.insert(pending_response, proposal_meta);
         }
-        self.latest_proposal_id = to;
+        self.num_proposals_sent = to;
     }
 
-    fn handle_normal_response(&mut self, id: u64, latency_res: Option<Duration>) {
+    fn handle_normal_response(&mut self, resp: T::Response, latency_res: Option<Duration>) {
         #[cfg(feature = "track_timestamps")]
         {
             let timestamp = self.clock.now();
-            self.timestamps.insert(id, timestamp);
+            self.timestamps.insert(resp.clone(), timestamp);
         }
-        self.responses.insert(id, latency_res);
+        self.responses.insert(resp, latency_res);
         let received_count = self.responses.len() as u64;
         if received_count == self.num_proposals {
             if self.reconfig.is_none() {
@@ -309,48 +321,49 @@ impl Client {
                 .expect("No leader to propose reconfiguration to!");
             self.propose_reconfiguration(&leader);
             self.reconfig_start_ts = Some(SystemTime::now());
-            let timer = self.schedule_once(self.timeout, move |c, _| c.reconfig_timeout());
-            let proposal_meta = ProposalMetaData::with(None, timer);
-            self.pending_proposals.insert(RECONFIG_ID, proposal_meta);
+            // let timer = self.schedule_once(self.timeout, move |c, _| c.reconfig_timeout());
+            let proposal_meta = ProposalMetaData::with(None);
+            self.pending_reconfig = Some(proposal_meta);
         }
     }
 
     fn handle_reconfig_response(&mut self, rr: ReconfigurationResp) {
-        if let Some(proposal_meta) = self.pending_proposals.remove(&RECONFIG_ID) {
-            self.reconfig_end_ts = Some(SystemTime::now());
-            let new_config = rr.current_configuration;
-            self.cancel_timer(proposal_meta.timer);
-            if self.responses.len() as u64 == self.num_proposals {
-                self.state = ExperimentState::Finished;
-                self.finished_latch
-                    .decrement()
-                    .expect("Failed to countdown finished latch");
-                info!(self.ctx.log(), "Got reconfig at last. {} proposals timed out. Leader changes: {}, {:?}, Last leader was: {}, ballot/term: {}", self.num_timed_out, self.leader_changes.len(), self.leader_changes, self.current_leader, self.leader_round);
-            } else {
-                self.reconfig = None;
-                self.current_config = new_config;
-                info!(
+        let proposal_meta = self.pending_reconfig.take().expect("Got reconfiguration response but no pending metadata");
+        self.reconfig_end_ts = Some(SystemTime::now());
+        let new_config = rr.current_configuration;
+        // self.cancel_timer(proposal_meta.timer);
+        if self.responses.len() as u64 == self.num_proposals {
+            self.state = ExperimentState::Finished;
+            self.finished_latch
+                .decrement()
+                .expect("Failed to countdown finished latch");
+            info!(self.ctx.log(), "Got reconfig at last. {} proposals timed out. Leader changes: {}, {:?}, Last leader was: {}, ballot/term: {}", self.num_timed_out, self.leader_changes.len(), self.leader_changes, self.current_leader, self.leader_round);
+        } else {
+            self.reconfig = None;
+            self.current_config = new_config;
+            info!(
                     self.ctx.log(),
                     "Reconfig OK, leader: {}, old: {}, current_config: {:?}",
                     rr.latest_leader,
                     self.current_leader,
                     self.current_config
                 );
-                if rr.latest_leader > 0
-                    && self.current_leader != rr.latest_leader
-                    && rr.leader_round > self.leader_round
-                {
-                    self.current_leader = rr.latest_leader;
-                    self.leader_round = rr.leader_round;
-                    self.leader_changes
-                        .push((SystemTime::now(), (self.current_leader, self.leader_round)));
-                }
-                self.send_concurrent_proposals();
+            if rr.latest_leader > 0
+                && self.current_leader != rr.latest_leader
+                && rr.leader_round > self.leader_round
+            {
+                self.current_leader = rr.latest_leader;
+                self.leader_round = rr.leader_round;
+                self.leader_changes
+                    .push((SystemTime::now(), (self.current_leader, self.leader_round)));
             }
+            self.send_concurrent_proposals();
         }
     }
 
     fn proposal_timeout(&mut self, id: u64) -> Handled {
+        todo!()
+        /*
         if self.responses.contains_key(&id) {
             return Handled::Ok;
         }
@@ -363,9 +376,13 @@ impl Client {
             self.timeouts.push(id);
         }
         Handled::Ok
+
+         */
     }
 
     fn reconfig_timeout(&mut self) -> Handled {
+        todo!()
+        /*
         let leader = self
             .nodes
             .get(&self.current_leader)
@@ -373,11 +390,13 @@ impl Client {
         self.propose_reconfiguration(leader);
         let timer = self.schedule_once(self.timeout, move |c, _| c.reconfig_timeout());
         let proposal_meta = self
-            .pending_proposals
+            .pending_responses
             .get_mut(&RECONFIG_ID)
             .expect("Could not find MetaData for Reconfiguration in pending_proposals");
         proposal_meta.set_timer(timer);
         Handled::Ok
+
+         */
     }
 
     fn send_stop(&mut self) {
@@ -395,11 +414,11 @@ impl Client {
     fn reply_stop_ask(&mut self) {
         if let Some(stop_ask) = self.stop_ask.take() {
             let l = std::mem::take(&mut self.responses);
-            let mut v: Vec<_> = l
+            let v: Vec<_> = l
                 .into_iter()
                 .filter(|(_, latency)| latency.is_some())
                 .collect();
-            v.sort();
+            // v.sort();    // TODO
             let latencies: Vec<Duration> =
                 v.into_iter().map(|(_, latency)| latency.unwrap()).collect();
 
@@ -611,9 +630,9 @@ impl Client {
     }
 }
 
-ignore_lifecycle!(Client);
+impl<T: LogCommand> ComponentLifecycle for Client<T> {}
 
-impl Actor for Client {
+impl<T: LogCommand> Actor for Client<T> {
     type Message = LocalClientMessage;
 
     fn receive_local(&mut self, msg: Self::Message) -> Handled {
@@ -658,10 +677,12 @@ impl Actor for Client {
                 }
             }
             LocalClientMessage::Stop(a) => {
-                let pending_proposals = std::mem::take(&mut self.pending_proposals);
+                self.pending_responses.clear();
+                /*
+                let pending_proposals = std::mem::take(&mut self.pending_responses);
                 for proposal_meta in pending_proposals {
                     self.cancel_timer(proposal_meta.1.timer);
-                }
+                }*/
                 self.send_stop();
                 self.stop_ask = Some(a);
             }
@@ -676,7 +697,7 @@ impl Actor for Client {
             data,
         } = m;
         match_deser! {data {
-            msg(am): AtomicBroadcastMsg<EntryType> [using AtomicBroadcastDeser] => {
+            msg(am): AtomicBroadcastMsg<T> [using AtomicBroadcastDeser] => {
                 // info!(self.ctx.log(), "Handling {:?}", am);
                 match am {
                     AtomicBroadcastMsg::Leader(pid, round) if self.state == ExperimentState::Setup => {
@@ -706,12 +727,11 @@ impl Actor for Client {
                     }
                     AtomicBroadcastMsg::ProposalResp(pr) => {
                         if self.state == ExperimentState::Finished { return Handled::Ok; }
-                        let data = pr.data;
-                        let id = data.as_slice().get_u64();
-                        if let Some(proposal_meta) = self.pending_proposals.remove(&id) {
+                        let data: T::Response = pr.data;
+                        if let Some(proposal_meta) = self.pending_responses.remove(&data) {
                             let now = self.clock.now();
                             let latency = proposal_meta.start_time.map(|start_time| now.duration_since(start_time));
-                            self.cancel_timer(proposal_meta.timer);
+                            // self.cancel_timer(proposal_meta.timer);
                             if self.current_config.contains(&pr.latest_leader) && self.leader_round < pr.leader_round{
                                 // info!(self.ctx.log(), "Got leader in normal response: {}. old: {}", pr.latest_leader, self.current_leader);
                                 self.leader_round = pr.leader_round;
@@ -720,7 +740,7 @@ impl Actor for Client {
                                     self.leader_changes.push((SystemTime::now(), (self.current_leader, self.leader_round)));
                                 }
                             }
-                            self.handle_normal_response(id, latency);
+                            self.handle_normal_response(data, latency);
                             self.send_concurrent_proposals();
                         } else {
                             #[cfg(feature = "preloaded_log")] {
@@ -749,10 +769,9 @@ impl Actor for Client {
                         }
                     },
                     AtomicBroadcastMsg::Proposal(p) => {    // node piggybacked proposal i.e. proposal failed
-                        let id = p.data.as_slice().get_u64();
-                        if !self.responses.contains_key(&id) {
+                        if !self.responses.contains_key(&p.data.create_response()) {
                             self.num_retried += 1;
-                            self.propose_normal(id);
+                            self.propose_normal();
                         }
                     }
                     _ => {},

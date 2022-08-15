@@ -70,7 +70,7 @@ pub mod paxos {
     };
     use std::{fmt::Debug, ops::Deref};
     use std::marker::PhantomData;
-    use crate::bench::atomic_broadcast::util::exp_util::{LogCommand, SnapshotType};
+    use crate::bench::atomic_broadcast::util::exp_util::{LogCommand, LogSnapshot, SnapshotType};
 
     const PREPARE_ID: u8 = 1;
     const PROMISE_ID: u8 = 2;
@@ -186,17 +186,17 @@ pub mod paxos {
     }
 
     #[derive(Clone, Debug)]
-    pub struct PaxosMsgWrapper<T: LogCommand>(pub Message<T, SnapshotType>);
+    pub struct PaxosMsgWrapper<T: LogCommand, S: LogSnapshot<T>>(pub Message<T, S>);
 
-    impl<T: LogCommand> Deref for PaxosMsgWrapper<T> {
-        type Target = Message<T, SnapshotType>;
+    impl<T: LogCommand, S: LogSnapshot<T>> Deref for PaxosMsgWrapper<T, S> {
+        type Target = Message<T, S>;
 
         fn deref(&self) -> &Self::Target {
             &self.0
         }
     }
 
-    impl<T: LogCommand>  Serialisable for PaxosMsgWrapper<T> {
+    impl<T: LogCommand, S: LogSnapshot<T>>  Serialisable for PaxosMsgWrapper<T, S> {
         fn ser_id(&self) -> u64 {
             serialiser_ids::PAXOS_ID
         }
@@ -988,13 +988,13 @@ impl ReconfigurationProposal {
 
 #[derive(Clone, Debug)]
 pub struct ProposalResp<T: LogCommand> {
-    pub data: T,
+    pub data: T::Response,
     pub latest_leader: u64,
     pub leader_round: u64,
 }
 
 impl<T: LogCommand> ProposalResp<T> {
-    pub fn with(data: T, latest_leader: u64, leader_round: u64) -> Self {
+    pub fn with(data: T::Response, latest_leader: u64, leader_round: u64) -> Self {
         Self {
             data,
             latest_leader,
@@ -1020,7 +1020,7 @@ impl ReconfigurationResp {
     }
 }
 
-#[derive(Clone, Debug)]
+#[derive(Debug)]
 pub enum AtomicBroadcastMsg<T: LogCommand> {
     Proposal(Proposal<T>),
     ReconfigurationProposal(ReconfigurationProposal),
@@ -1053,8 +1053,6 @@ impl<T: LogCommand> Serialisable for AtomicBroadcastMsg<T> {
             AtomicBroadcastMsg::Proposal(p) => {
                 buf.put_u8(PROPOSAL_ID);
                 let data = bincode::serialize(&p.data).expect("Failed to serialize data");
-                let data_len = data.len() as u32;
-                buf.put_u32(data_len);
                 buf.put_slice(data.as_slice());
             }
             AtomicBroadcastMsg::ReconfigurationProposal(rp) => {
@@ -1073,8 +1071,6 @@ impl<T: LogCommand> Serialisable for AtomicBroadcastMsg<T> {
                 buf.put_u64(pr.latest_leader);
                 buf.put_u64(pr.leader_round);
                 let data = bincode::serialize(&pr.data).expect("Failed to serialize data");
-                let data_len = data.len() as u32;
-                buf.put_u32(data_len);
                 buf.put_slice(data.as_slice());
             }
             AtomicBroadcastMsg::ReconfigurationResp(rr) => {
@@ -1173,14 +1169,9 @@ impl<T: LogCommand> Deserialiser<AtomicBroadcastMsg<T>> for AtomicBroadcastDeser
     fn deserialise(buf: &mut dyn Buf) -> Result<AtomicBroadcastMsg<T>, SerError> {
         match buf.get_u8() {
             PROPOSAL_ID => {
-                todo!()
-                /*
-                let data_len = buf.get_u32() as usize;
-                let mut data = vec![0; data_len];
-                buf.copy_to_slice(&mut data);
+                let data: T = bincode::deserialize_from(buf.reader()).expect("Failed to deserialize data");
                 let proposal = Proposal::with(data);
                 Ok(AtomicBroadcastMsg::Proposal(proposal))
-                */
             }
             RECONFIGPROP_ID => {
                 let policy = match buf.get_u8() {
@@ -1202,21 +1193,15 @@ impl<T: LogCommand> Deserialiser<AtomicBroadcastMsg<T>> for AtomicBroadcastDeser
                 Ok(AtomicBroadcastMsg::ReconfigurationProposal(rp))
             }
             PROPOSALRESP_ID => {
-                todo!()
-                /*
                 let latest_leader = buf.get_u64();
                 let leader_round = buf.get_u64();
-                let data_len = buf.get_u32() as usize;
-                let mut data = vec![0; data_len];
-                buf.copy_to_slice(&mut data);
+                let data: T::Response = bincode::deserialize_from(buf.reader()).expect("Failed to deserialize response data");
                 let pr = ProposalResp {
                     data,
                     latest_leader,
                     leader_round,
                 };
                 Ok(AtomicBroadcastMsg::ProposalResp(pr))
-
-                 */
             }
             LEADER_ID => {
                 let pid = buf.get_u64();

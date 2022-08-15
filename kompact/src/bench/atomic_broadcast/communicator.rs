@@ -168,8 +168,6 @@ impl<T: LogCommand, S: LogSnapshot<T>> ComponentLifecycle for Communicator<T, S>
 
 impl<T: LogCommand, S: LogSnapshot<T>> Provide<CommunicationPort<T, S>> for Communicator<T, S> {
     fn handle(&mut self, msg: CommunicatorMsg<T, S>) -> Handled {
-        todo!()
-        /*
         #[cfg(feature = "measure_io")]
         self.update_sent_io_metadata(&msg);
         match msg {
@@ -200,14 +198,14 @@ impl<T: LogCommand, S: LogSnapshot<T>> Provide<CommunicationPort<T, S>> for Comm
             }
             CommunicatorMsg::ProposalResponse(pr) => {
                 trace!(self.ctx.log(), "ProposalResp: {:?}", pr);
-                let am = AtomicBroadcastMsg::ProposalResp(pr);
+                let am = AtomicBroadcastMsg::<T>::ProposalResp(pr);
                 self.client
                     .tell_serialised(am, self)
                     .expect("Should serialise ProposalResp");
             }
             CommunicatorMsg::ReconfigurationResponse(rr) => {
                 trace!(self.ctx.log(), "ReconfigurationResp: {:?}", rr);
-                let am = AtomicBroadcastMsg::ReconfigurationResp(rr);
+                let am = AtomicBroadcastMsg::<T>::ReconfigurationResp(rr);
                 self.client
                     .tell_serialised(am, self)
                     .expect("Should serialise ProposalResp");
@@ -230,7 +228,6 @@ impl<T: LogCommand, S: LogSnapshot<T>> Provide<CommunicationPort<T, S>> for Comm
             }
         }
         Handled::Ok
-         */
     }
 }
 

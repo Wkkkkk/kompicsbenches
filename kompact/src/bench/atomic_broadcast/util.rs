@@ -4,9 +4,8 @@ pub(crate) mod exp_util {
     };
     use hocon::HoconLoader;
     use std::{path::PathBuf, time::Duration};
-    use std::any::Any;
     use std::fmt::Debug;
-    use kompact::prelude::{Buf, BufMut, Deserialisable, Deserialiser, Serialisable};
+    use std::hash::Hash;
     use omnipaxos_core::storage::{Entry, Snapshot, Storage};
     use omnipaxos_core::storage::memory_storage::MemoryStorage;
     use serde::{Serialize, de::DeserializeOwned};
@@ -21,15 +20,26 @@ pub(crate) mod exp_util {
     pub const DATA_SIZE: usize = 8;
 
     pub trait LogCommand: Entry + Serialize + DeserializeOwned + Send + Sync + 'static + Debug {
+        type Response: Serialize + DeserializeOwned + Send + Debug + Clone + Eq + Hash;
+
+        fn create_response(&self) -> Self::Response;
+
     }
     pub trait LogSnapshot<T: LogCommand>: Snapshot<T> + Send + Sync + 'static + Debug {}
     pub trait ReplicaStore<T: LogCommand, S: LogSnapshot<T>>: Storage<T, S> + Default + Send + Sync + 'static {}
 
     pub type EntryType = Vec<u8>;
+    impl LogCommand for EntryType {
+        type Response = u64;
+
+        fn create_response(&self) -> Self::Response {
+            todo!()
+        }
+    }
+
     pub type SnapshotType = ();
     pub type PaxosStorageType = MemoryStorage<EntryType, SnapshotType>;
 
-    impl LogCommand for EntryType {}
     // impl LogSnapshot<EntryType> for SnapshotType {}
     impl ReplicaStore<EntryType, SnapshotType> for PaxosStorageType {}
     impl LogSnapshot<EntryType> for () {}

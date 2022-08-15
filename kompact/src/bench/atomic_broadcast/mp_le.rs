@@ -272,7 +272,6 @@ impl Actor for MultiPaxosLeaderComp {
                                 // got a new leader with greater ballot
                                 self.quick_timeout = false;
                                 self.leader = Some(rep.current_leader);
-                                let top_pid = rep.current_leader.pid;
                                 self.ble_port.trigger(rep.current_leader);
                             }
                         } else {

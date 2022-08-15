@@ -1127,13 +1127,7 @@ pub enum PaxosCompMsg
     LocalSegmentTransferMeta(usize),
 }
 
-impl<T, S, B> ComponentLifecycle for PaxosComp<T, S, B>
-where
-    T: LogCommand,
-    S: LogSnapshot<T>,
-    B: ReplicaStore<T, S>, 
-{
-}
+impl<T: LogCommand, S: LogSnapshot<T>, B: ReplicaStore<T, S>, > ComponentLifecycle for PaxosComp<T, S, B> {}
 
 impl<T, S, B> Actor for PaxosComp<T, S, B>
 where
@@ -1681,7 +1675,7 @@ where
                 for decided in ents {
                     match decided {
                         LogEntry::Decided(data) => {
-                            let pr = ProposalResp::with(data.clone(), self.pid, promise.n as u64);
+                            let pr = ProposalResp::with(data.create_response(), self.pid, promise.n as u64);
                             self.communication_port
                                 .trigger(CommunicatorMsg::ProposalResponse(pr));
                         }

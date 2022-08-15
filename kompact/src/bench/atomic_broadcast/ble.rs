@@ -140,7 +140,6 @@ impl BallotLeaderComp {
             // got a new leader with greater ballot
             self.quick_timeout = false;
             self.leader = Some(top_ballot);
-            let top_pid = top_ballot.pid;
             self.ble_port.trigger(top_ballot);
         }
     }
