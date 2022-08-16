@@ -5,8 +5,8 @@ use crate::bench::atomic_broadcast::messages::{
 use crate::bench::atomic_broadcast::util::io_metadata::IOMetaData;
 use hashbrown::HashSet;
 use kompact::prelude::*;
-use std::time::Duration;
 use omnipaxos_core::ballot_leader_election::Ballot;
+use std::time::Duration;
 
 #[derive(Debug)]
 pub struct Stop(pub Ask<u64, ()>); // pid
@@ -100,7 +100,7 @@ impl BallotLeaderComp {
     /// Sets initial state after creation. Should only be used before being started.
     pub fn set_initial_leader(&mut self, l: Ballot) {
         assert!(self.leader.is_none());
-        let leader_ballot = Ballot::with(l.n,  0, l.pid);
+        let leader_ballot = Ballot::with(l.n, 0, l.pid);
         self.leader = Some(leader_ballot);
         if l.pid == self.pid {
             self.current_ballot = leader_ballot;

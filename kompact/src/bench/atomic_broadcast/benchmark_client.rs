@@ -1,10 +1,6 @@
 extern crate raft as tikv_raft;
 
-use super::{
-    super::*,
-    paxos::PaxosComp,
-    raft::RaftComp,
-};
+use super::{super::*, paxos::PaxosComp, raft::RaftComp};
 use crate::bench::atomic_broadcast::{
     paxos::{LeaderElection, PaxosCompMsg},
     raft::RaftCompMsg,
@@ -125,7 +121,11 @@ impl DistributedBenchmarkClient for AtomicBroadcastClient {
                 let pv_qc = r == "raft_pv_qc";
                 /*** Setup RaftComp ***/
                 let (raft_comp, unique_reg_f) = system.create_and_register(|| {
-                    RaftComp::<EntryType, MemStorage>::with(initial_config, experiment_params, pv_qc)
+                    RaftComp::<EntryType, MemStorage>::with(
+                        initial_config,
+                        experiment_params,
+                        pv_qc,
+                    )
                 });
                 unique_reg_f.wait_expect(REGISTER_TIMEOUT, "RaftComp failed to register!");
                 let self_path = system

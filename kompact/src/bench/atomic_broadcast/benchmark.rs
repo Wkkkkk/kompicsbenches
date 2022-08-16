@@ -18,7 +18,7 @@ impl DistributedBenchmark for AtomicBroadcast {
     type ClientConf = ClientParams;
     type ClientData = ActorPath;
     type Master = AtomicBroadcastMaster;
-    type Client = AtomicBroadcastClient<>;
+    type Client = AtomicBroadcastClient;
     const LABEL: &'static str = "AtomicBroadcast";
 
     fn new_master() -> Self::Master {
@@ -57,7 +57,7 @@ impl DistributedBenchmark for AtomicBroadcast {
 
 #[derive(Debug, Clone)]
 pub struct Done;
-
+/*
 #[cfg(test)]
 pub mod tests {
     use super::*;
@@ -359,3 +359,4 @@ pub mod tests {
         );
     }
 }
+*/

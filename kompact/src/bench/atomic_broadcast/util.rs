@@ -3,12 +3,10 @@ pub(crate) mod exp_util {
         kompics_benchmarks::benchmarks::AtomicBroadcastRequest, BenchmarkError,
     };
     use hocon::HoconLoader;
-    use std::{path::PathBuf, time::Duration};
-    use std::fmt::Debug;
-    use std::hash::Hash;
-    use omnipaxos_core::storage::{Entry, Snapshot, Storage};
-    use omnipaxos_core::storage::memory_storage::MemoryStorage;
-    use serde::{Serialize, de::DeserializeOwned};
+    use kompact::prelude::Buf;
+    use omnipaxos_core::storage::{memory_storage::MemoryStorage, Entry, Snapshot, Storage};
+    use serde::{de::DeserializeOwned, Serialize};
+    use std::{fmt::Debug, hash::Hash, path::PathBuf, time::Duration};
 
     pub const TCP_NODELAY: bool = true;
     pub const CONFIG_PATH: &str = "./configs/atomic_broadcast.conf";
@@ -19,21 +17,31 @@ pub(crate) mod exp_util {
     pub const WINDOW_DURATION: Duration = Duration::from_millis(5000);
     pub const DATA_SIZE: usize = 8;
 
-    pub trait LogCommand: Entry + Serialize + DeserializeOwned + Send + Sync + 'static + Debug {
+    pub trait LogCommand:
+        Entry + Serialize + DeserializeOwned + Send + Sync + 'static + Debug
+    {
         type Response: Serialize + DeserializeOwned + Send + Debug + Clone + Eq + Hash;
 
+        fn with(id: u64) -> Self;
         fn create_response(&self) -> Self::Response;
-
     }
     pub trait LogSnapshot<T: LogCommand>: Snapshot<T> + Send + Sync + 'static + Debug {}
-    pub trait ReplicaStore<T: LogCommand, S: LogSnapshot<T>>: Storage<T, S> + Default + Send + Sync + 'static {}
+    pub trait ReplicaStore<T: LogCommand, S: LogSnapshot<T>>:
+        Storage<T, S> + Default + Send + Sync + 'static
+    {
+    }
 
     pub type EntryType = Vec<u8>;
     impl LogCommand for EntryType {
         type Response = u64;
 
+        fn with(id: u64) -> Self {
+            bincode::serialize(&id).expect("Failed to serialize data id")
+        }
+
         fn create_response(&self) -> Self::Response {
-            todo!()
+            bincode::deserialize_from(self.as_slice().reader())
+                .expect("Failed to deserialize data id")
         }
     }
 

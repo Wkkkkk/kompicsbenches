@@ -191,12 +191,12 @@ impl<T: LogCommand> Client<T> {
         }
     }
 
-    fn create_proposal_data(&mut self) -> T {
-        todo!()
+    fn create_proposal_data(&mut self, id: u64) -> T {
+        T::with(id) // TODO Change this for custom experiments
     }
 
-    fn propose_normal(&mut self) -> T::Response {
-        let data: T = self.create_proposal_data();
+    fn propose_normal(&mut self, id: u64) -> T::Response {
+        let data: T = self.create_proposal_data(id);
         let response = data.create_response();
         let p = Proposal::with(data);
         let leader = self.nodes.get(&self.current_leader).unwrap();
@@ -217,8 +217,11 @@ impl<T: LogCommand> Client<T> {
             )
         );
         let rp = ReconfigurationProposal::with(*policy, reconfig.clone());
-        node.tell_serialised(AtomicBroadcastMsg::<EntryType>::ReconfigurationProposal(rp), self)
-            .expect("Should serialise reconfig Proposal");
+        node.tell_serialised(
+            AtomicBroadcastMsg::<EntryType>::ReconfigurationProposal(rp),
+            self,
+        )
+        .expect("Should serialise reconfig Proposal");
         #[cfg(feature = "track_timeouts")]
         {
             info!(self.ctx.log(), "Proposed reconfiguration. latest_proposal_id: {}, timed_out: {}, pending proposals: {}, min: {:?}, max: {:?}",
@@ -245,15 +248,16 @@ impl<T: LogCommand> Client<T> {
         }
         let cache_start_time =
             self.num_concurrent_proposals == 1 || cfg!(feature = "track_latency");
-        for _ in from..=to {
+        for id in from..=to {
             let current_time = match cache_start_time {
                 true => Some(self.clock.now()),
                 _ => None,
             };
-            let pending_response: T::Response = self.propose_normal();
+            let pending_response: T::Response = self.propose_normal(id);
             // let timer = self.schedule_once(self.timeout, move |c, _| c.proposal_timeout(id));    // TODO How to handle timeouts?
             let proposal_meta = ProposalMetaData::with(current_time);
-            self.pending_responses.insert(pending_response, proposal_meta);
+            self.pending_responses
+                .insert(pending_response, proposal_meta);
         }
         self.num_proposals_sent = to;
     }
@@ -271,8 +275,11 @@ impl<T: LogCommand> Client<T> {
                 if let Some(timer) = self.window_timer.take() {
                     self.cancel_timer(timer);
                 }
-                if let Some(timer) = self.periodic_partition_timer.take() {
-                    self.cancel_timer(timer);
+                #[cfg(feature = "simulate_partition")]
+                {
+                    if let Some(timer) = self.periodic_partition_timer.take() {
+                        self.cancel_timer(timer);
+                    }
                 }
                 self.state = ExperimentState::Finished;
                 self.finished_latch
@@ -328,7 +335,10 @@ impl<T: LogCommand> Client<T> {
     }
 
     fn handle_reconfig_response(&mut self, rr: ReconfigurationResp) {
-        let proposal_meta = self.pending_reconfig.take().expect("Got reconfiguration response but no pending metadata");
+        let proposal_meta = self
+            .pending_reconfig
+            .take()
+            .expect("Got reconfiguration response but no pending metadata");
         self.reconfig_end_ts = Some(SystemTime::now());
         let new_config = rr.current_configuration;
         // self.cancel_timer(proposal_meta.timer);
@@ -342,12 +352,12 @@ impl<T: LogCommand> Client<T> {
             self.reconfig = None;
             self.current_config = new_config;
             info!(
-                    self.ctx.log(),
-                    "Reconfig OK, leader: {}, old: {}, current_config: {:?}",
-                    rr.latest_leader,
-                    self.current_leader,
-                    self.current_config
-                );
+                self.ctx.log(),
+                "Reconfig OK, leader: {}, old: {}, current_config: {:?}",
+                rr.latest_leader,
+                self.current_leader,
+                self.current_config
+            );
             if rr.latest_leader > 0
                 && self.current_leader != rr.latest_leader
                 && rr.leader_round > self.leader_round
@@ -769,10 +779,11 @@ impl<T: LogCommand> Actor for Client<T> {
                         }
                     },
                     AtomicBroadcastMsg::Proposal(p) => {    // node piggybacked proposal i.e. proposal failed
-                        if !self.responses.contains_key(&p.data.create_response()) {
+                        todo!("Handle failed proposal")
+                        /*if !self.responses.contains_key(&p.data.create_response()) {
                             self.num_retried += 1;
                             self.propose_normal();
-                        }
+                        }*/
                     }
                     _ => {},
                 }

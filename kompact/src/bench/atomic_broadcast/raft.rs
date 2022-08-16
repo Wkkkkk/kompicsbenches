@@ -5,8 +5,6 @@ use super::{
     messages::{StopMsg as NetStopMsg, StopMsgDeser, *},
     storage::raft::*,
 };
-#[cfg(test)]
-use crate::bench::atomic_broadcast::benchmark::tests::SequenceResp;
 #[cfg(feature = "simulate_partition")]
 use crate::bench::atomic_broadcast::messages::{PartitioningExpMsg, PartitioningExpMsgDeser};
 #[cfg(feature = "periodic_replica_logging")]
@@ -35,11 +33,11 @@ use rand::Rng;
 use std::io::Write;
 use std::{borrow::Borrow, clone::Clone, marker::Send, ops::DerefMut, sync::Arc, time::Duration};
 
+use crate::bench::atomic_broadcast::util::exp_util::{LogCommand, LogSnapshot, SnapshotType};
 use tikv_raft::{
     prelude::{Entry, Message as TikvRaftMsg, *},
     StateRole,
 };
-use crate::bench::atomic_broadcast::util::exp_util::{LogCommand, LogSnapshot, SnapshotType};
 
 const COMMUNICATOR: &str = "communicator";
 const DELAY: Duration = Duration::from_millis(0);
@@ -50,8 +48,8 @@ pub enum RaftCompMsg {
     Removed,
     ForwardReconfig(u64, ReconfigurationProposal),
     KillComponents(Ask<(), Done>),
-    #[cfg(test)]
-    GetSequence(Ask<(), SequenceResp>),
+    // #[cfg(test)]
+    // GetSequence(Ask<(), SequenceResp>),
 }
 
 #[derive(ComponentDefinition)]
@@ -59,7 +57,7 @@ pub struct RaftComp<T, B>
 where
     T: LogCommand,
     B: RaftStorage + Send + Clone + 'static,
-    (): LogSnapshot<T>
+    (): LogSnapshot<T>,
 {
     ctx: ComponentContext<Self>,
     pid: u64,
@@ -81,7 +79,7 @@ impl<T, B> RaftComp<T, B>
 where
     T: LogCommand,
     B: RaftStorage + Send + Clone + 'static,
-    (): LogSnapshot<T>
+    (): LogSnapshot<T>,
 {
     pub fn with(
         initial_config: Vec<u64>,
@@ -215,8 +213,11 @@ where
         });
         let communicator_alias = format!("{}{}-{}", COMMUNICATOR, self.pid, self.iteration_id);
         let comm_alias_f = system.register_by_alias(&communicator, communicator_alias);
-        biconnect_components::<CommunicationPort<T, SnapshotType>, _, _>(&communicator, &raft_replica)
-            .expect("Could not connect components!");
+        biconnect_components::<CommunicationPort<T, SnapshotType>, _, _>(
+            &communicator,
+            &raft_replica,
+        )
+        .expect("Could not connect components!");
         self.raft_replica = Some(raft_replica);
         self.communicator = Some(communicator);
         Handled::block_on(self, move |mut async_self| async move {
@@ -325,13 +326,15 @@ impl<T, B> ComponentLifecycle for RaftComp<T, B>
 where
     T: LogCommand,
     B: RaftStorage + Send + Clone + 'static,
-    (): LogSnapshot<T> {}
+    (): LogSnapshot<T>,
+{
+}
 
 impl<T, B> Actor for RaftComp<T, B>
 where
     T: LogCommand,
     B: RaftStorage + Send + Clone + 'static,
-    (): LogSnapshot<T>
+    (): LogSnapshot<T>,
 {
     type Message = RaftCompMsg;
 
@@ -363,17 +366,17 @@ where
             }
             RaftCompMsg::KillComponents(ask) => {
                 return self.kill_components(ask);
-            }
-            #[cfg(test)]
-            RaftCompMsg::GetSequence(ask) => {
-                let raft_replica = self.raft_replica.as_ref().expect("No raft replica");
-                let seq = raft_replica
-                    .actor_ref()
-                    .ask_with(|promise| RaftReplicaMsg::SequenceReq(Ask::new(promise, ())))
-                    .wait();
-                let sr = SequenceResp::with(self.pid, seq);
-                ask.reply(sr).expect("Failed to reply SequenceResp");
-            }
+            } /*
+              #[cfg(test)]
+              RaftCompMsg::GetSequence(ask) => {
+                  let raft_replica = self.raft_replica.as_ref().expect("No raft replica");
+                  let seq = raft_replica
+                      .actor_ref()
+                      .ask_with(|promise| RaftReplicaMsg::SequenceReq(Ask::new(promise, ())))
+                      .wait();
+                  let sr = SequenceResp::with(self.pid, seq);
+                  ask.reply(sr).expect("Failed to reply SequenceResp");
+              }*/
         }
         Handled::Ok
     }
@@ -507,7 +510,7 @@ pub struct RaftReplica<T, B>
 where
     T: LogCommand,
     B: RaftStorage + Send + Clone + 'static,
-    (): LogSnapshot<T>
+    (): LogSnapshot<T>,
 {
     ctx: ComponentContext<Self>,
     supervisor: ActorRef<RaftCompMsg>,
@@ -530,7 +533,7 @@ impl<T, B> ComponentLifecycle for RaftReplica<T, B>
 where
     T: LogCommand,
     B: RaftStorage + Send + Clone + 'static,
-    (): LogSnapshot<T>
+    (): LogSnapshot<T>,
 {
     fn on_start(&mut self) -> Handled {
         let bc = BufferConfig::default();
@@ -554,7 +557,7 @@ impl<T, B> Actor for RaftReplica<T, B>
 where
     T: LogCommand,
     B: RaftStorage + Send + Clone + 'static,
-    (): LogSnapshot<T>
+    (): LogSnapshot<T>,
 {
     type Message = RaftReplicaMsg<T>;
 
@@ -614,7 +617,7 @@ impl<T, B> Require<CommunicationPort<T, SnapshotType>> for RaftReplica<T, B>
 where
     T: LogCommand,
     B: RaftStorage + Send + Clone + 'static,
-    (): LogSnapshot<T>
+    (): LogSnapshot<T>,
 {
     fn handle(&mut self, msg: AtomicBroadcastCompMsg<T, SnapshotType>) -> Handled {
         match msg {
@@ -648,7 +651,7 @@ impl<T, B> RaftReplica<T, B>
 where
     T: LogCommand,
     B: RaftStorage + Send + Clone + 'static,
-    (): LogSnapshot<T>
+    (): LogSnapshot<T>,
 {
     pub fn with(
         raw_raft: RawNode<B>,
@@ -771,17 +774,13 @@ where
         if self.raw_raft.raft.leader_id == 0 {
             self.hb_proposals.push(proposal);
         } else {
-            todo!()
-            /*
-            let data = proposal.data;
-            self.raw_raft.propose(vec![], data).unwrap_or_else(|_| {
+            let ser_data = bincode::serialize(&proposal.data).expect("Failed to serialize data");
+            self.raw_raft.propose(vec![], ser_data).unwrap_or_else(|_| {
                 panic!(
                     "Failed to propose. leader: {}, lead_transferee: {:?}",
                     self.raw_raft.raft.leader_id, self.raw_raft.raft.lead_transferee
                 )
             });
-
-             */
         }
     }
 
@@ -939,18 +938,17 @@ where
                         _ => unimplemented!(),
                     }
                 } else {
-                    todo!()
-                    // normal proposals
-                    /*
                     if self.raw_raft.raft.state == StateRole::Leader {
+                        let deser_data: T = bincode::deserialize_from(entry.get_data().reader())
+                            .expect("Failed to deserialize data");
                         let pr = ProposalResp::with(
-                            entry.get_data().to_vec(),
+                            deser_data.create_response(),
                             self.raw_raft.raft.id,
                             self.raw_raft.raft.term,
                         );
                         self.communication_port
                             .trigger(CommunicatorMsg::ProposalResponse(pr));
-                    }*/
+                    }
                 }
             }
             if let Some(last_committed) = committed_entries.last() {

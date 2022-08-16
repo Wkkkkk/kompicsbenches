@@ -9,8 +9,8 @@ use crate::bench::atomic_broadcast::{
 };
 use hashbrown::HashSet;
 use kompact::prelude::*;
-use std::time::Duration;
 use omnipaxos_core::ballot_leader_election::Ballot;
+use std::time::Duration;
 
 #[derive(ComponentDefinition)]
 pub struct VRLeaderElectionComp {

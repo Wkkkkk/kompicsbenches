@@ -9,14 +9,15 @@ use crate::bench::atomic_broadcast::{
 };
 use hashbrown::HashSet;
 use kompact::prelude::*;
-use std::time::Duration;
 use omnipaxos_core::ballot_leader_election::Ballot;
+use std::time::Duration;
 
 #[derive(ComponentDefinition)]
 pub struct MultiPaxosLeaderComp {
     // TODO decouple from kompact, similar style to tikv_raft with tick() replacing timers
     ctx: ComponentContext<Self>,
     ble_port: ProvidedPort<BallotLeaderElection>,
+    #[allow(dead_code)]
     pid: u64,
     pub(crate) peers: Vec<ActorPath>,
     hb_round: u32,

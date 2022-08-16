@@ -8,8 +8,6 @@ use super::{
         StopMsg as NetStopMsg, *,
     },
 };
-#[cfg(test)]
-use crate::bench::atomic_broadcast::benchmark::tests::SequenceResp;
 use crate::{
     bench::atomic_broadcast::{
         benchmark::Done,
@@ -36,10 +34,10 @@ use std::time::SystemTime;
 
 #[cfg(feature = "periodic_replica_logging")]
 use crate::bench::atomic_broadcast::util::exp_util::WINDOW_DURATION;
+use omnipaxos_core::util::LogEntry;
 #[cfg(feature = "measure_io")]
 use std::io::Write;
 use std::marker::PhantomData;
-use omnipaxos_core::util::LogEntry;
 
 #[cfg(feature = "simulate_partition")]
 use crate::bench::atomic_broadcast::messages::{PartitioningExpMsg, PartitioningExpMsgDeser};
@@ -57,20 +55,20 @@ pub struct FinalMsg<T, S, B>
 where
     T: LogCommand,
     S: LogSnapshot<T>,
-    B: Storage<T, S>
+    B: Storage<T, S>,
 {
     pub config_id: ConfigId,
     pub nodes: Reconfig,
     pub final_sequence: Arc<B>,
     pub skip_prepare_use_leader: Option<Ballot>,
-    _p: PhantomData<(T, S)>
+    _p: PhantomData<(T, S)>,
 }
 
 impl<T, S, B> FinalMsg<T, S, B>
 where
     T: LogCommand,
     S: LogSnapshot<T>,
-    B: Storage<T, S>
+    B: Storage<T, S>,
 {
     pub fn with(
         config_id: ConfigId,
@@ -83,7 +81,7 @@ where
             nodes,
             final_sequence,
             skip_prepare_use_leader,
-            _p: PhantomData
+            _p: PhantomData,
         }
     }
 }
@@ -94,10 +92,10 @@ pub enum PaxosReplicaMsg<T: LogCommand> {
     ProposeReconfiguration(ReconfigurationProposal),
     LocalSegmentReq(ActorPath, SegmentRequest, SequenceMetaData),
     Stop(Ask<bool, ()>), // ack_client
-    /*
-    #[cfg(test)]
-    SequenceReq(Ask<(), Vec<Entry>>),
-     */
+                         /*
+                         #[cfg(test)]
+                         SequenceReq(Ask<(), Vec<Entry>>),
+                          */
 }
 
 #[derive(Clone, Debug)]
@@ -126,7 +124,7 @@ impl<T: LogCommand> Default for HoldBackProposals<T> {
     fn default() -> Self {
         Self {
             deserialised: vec![],
-            serialised: vec![]
+            serialised: vec![],
         }
     }
 }
@@ -196,10 +194,10 @@ where
 }
 
 impl<T, S, B> PaxosComp<T, S, B>
-    where
-        T: LogCommand,
-        S: LogSnapshot<T>,
-        B: ReplicaStore<T, S>,
+where
+    T: LogCommand,
+    S: LogSnapshot<T>,
+    B: ReplicaStore<T, S>,
 {
     pub fn with(
         initial_configuration: Vec<u64>,
@@ -325,28 +323,27 @@ impl<T, S, B> PaxosComp<T, S, B>
         let initial_log = if cfg!(feature = "preloaded_log") && !reconfig_replica {
             todo!()
             /*
-            let size: u64 = self.experiment_params.preloaded_log_size;
-            let mut preloaded_log = Vec::with_capacity(size as usize);
-            for id in 1..=size {
-                let data = create_raw_proposal(id);
-                let entry = Entry::Normal(data);
-                preloaded_log.push(entry);
-            }
-            preloaded_log
-        } else {
-            vec![]
+                let size: u64 = self.experiment_params.preloaded_log_size;
+                let mut preloaded_log = Vec::with_capacity(size as usize);
+                for id in 1..=size {
+                    let data = create_raw_proposal(id);
+                    let entry = Entry::Normal(data);
+                    preloaded_log.push(entry);
+                }
+                preloaded_log
+            } else {
+                vec![]
 
-             */
+                 */
         };
         let mut paxos_config = SequencePaxosConfig::default();
         paxos_config.set_configuration_id(config_id);
         paxos_config.set_pid(self.pid);
         paxos_config.set_peers(raw_peers.expect("No peers"));
-        if let Some(b) = skip_prepare_use_leader { paxos_config.set_skip_prepare_use_leader(b); }
-        SequencePaxos::with(
-            paxos_config,
-            B::default(),
-        )
+        if let Some(b) = skip_prepare_use_leader {
+            paxos_config.set_skip_prepare_use_leader(b);
+        }
+        SequencePaxos::with(paxos_config, B::default())
     }
 
     fn create_replica(
@@ -487,11 +484,10 @@ impl<T, S, B> PaxosComp<T, S, B>
             paxos_config.set_configuration_id(config_id);
             paxos_config.set_pid(self.pid);
             paxos_config.set_peers(peers);
-            if let Some(b)  = skip_prepare_use_leader.as_ref() { paxos_config.set_skip_prepare_use_leader(b.clone()); }
-            p.paxos = SequencePaxos::with(
-                paxos_config,
-                B::default()
-            );
+            if let Some(b) = skip_prepare_use_leader.as_ref() {
+                paxos_config.set_skip_prepare_use_leader(b.clone());
+            }
+            p.paxos = SequencePaxos::with(paxos_config, B::default());
         });
         let le = self
             .le_comps
@@ -751,9 +747,8 @@ impl<T, S, B> PaxosComp<T, S, B>
     }
 
     fn deserialise_and_propose(&self, m: NetMessage) {
-        todo!()
-        /*match_deser! {m {
-            msg(am): AtomicBroadcastMsg [using AtomicBroadcastDeser] => {
+        match_deser! {m {
+            msg(am): AtomicBroadcastMsg<T> [using AtomicBroadcastDeser] => {
                 match am {
                     AtomicBroadcastMsg::Proposal(p) => self.propose(p),
                     AtomicBroadcastMsg::ReconfigurationProposal(rp) => self.propose_reconfiguration(rp),
@@ -761,7 +756,6 @@ impl<T, S, B> PaxosComp<T, S, B>
                 }
             }
         }}
-        */
     }
 
     fn propose_hb_proposals(&mut self) {
@@ -1115,25 +1109,27 @@ impl<T, S, B> PaxosComp<T, S, B>
 }
 
 #[derive(Debug)]
-pub enum PaxosCompMsg
-{
+pub enum PaxosCompMsg {
     Leader(ConfigId, Ballot),
     PendingReconfig(Vec<u8>),
     // Reconfig(FinalMsg<S>),
     KillComponents(Ask<(), Done>),
-    #[cfg(test)]
-    GetSequence(Ask<(), SequenceResp>),
+    // #[cfg(test)]
+    // GetSequence(Ask<(), SequenceResp>),
     #[cfg(feature = "measure_io")]
     LocalSegmentTransferMeta(usize),
 }
 
-impl<T: LogCommand, S: LogSnapshot<T>, B: ReplicaStore<T, S>, > ComponentLifecycle for PaxosComp<T, S, B> {}
+impl<T: LogCommand, S: LogSnapshot<T>, B: ReplicaStore<T, S>> ComponentLifecycle
+    for PaxosComp<T, S, B>
+{
+}
 
 impl<T, S, B> Actor for PaxosComp<T, S, B>
 where
     T: LogCommand,
     S: LogSnapshot<T>,
-    B: ReplicaStore<T, S>, 
+    B: ReplicaStore<T, S>,
 {
     type Message = PaxosCompMsg;
 
@@ -1238,55 +1234,57 @@ where
             #[cfg(feature = "measure_io")]
             PaxosCompMsg::LocalSegmentTransferMeta(size) => {
                 self.io_metadata.update_sent_with_size(size);
-            }
-            #[cfg(test)]
-            PaxosCompMsg::GetSequence(ask) => {
-                let mut all_entries = vec![];
-                let mut unique = HashSet::new();
-                for i in 1..self.active_config.id {
-                    if let Some(seq) = self.prev_sequences.get(&i) {
-                        let sequence = seq.get_sequence();
-                        for entry in sequence {
-                            if let Entry::Normal(n) = entry {
-                                let id = n.as_slice().get_u64();
-                                all_entries.push(id);
-                                unique.insert(id);
-                            }
-                        }
-                    }
-                }
-                if self.active_config.id > 0 {
-                    let active_paxos = self.paxos_replicas.last().unwrap();
-                    let sequence = active_paxos
-                        .actor_ref()
-                        .ask_with(|promise| PaxosReplicaMsg::SequenceReq(Ask::new(promise, ())))
-                        .wait();
-                    for entry in sequence {
-                        if let Entry::Normal(n) = entry {
-                            let id = n.as_slice().get_u64();
-                            all_entries.push(id);
-                            unique.insert(id);
-                        }
-                    }
-                    let min = unique.iter().min();
-                    let max = unique.iter().max();
-                    debug!(
-                        self.ctx.log(),
-                        "Got SequenceReq: my seq_len: {}, unique: {}, min: {:?}, max: {:?}",
-                        all_entries.len(),
-                        unique.len(),
-                        min,
-                        max
-                    );
-                } else {
-                    warn!(
-                        self.ctx.log(),
-                        "Got SequenceReq but no active paxos: {}", self.active_config.id
-                    );
-                }
-                let sr = SequenceResp::with(self.pid, all_entries);
-                ask.reply(sr).expect("Failed to reply SequenceResp");
-            }
+            } /*
+              #[cfg(test)]
+              PaxosCompMsg::GetSequence(ask) => {
+                  let mut all_entries = vec![];
+                  let mut unique = HashSet::new();
+                  for i in 1..self.active_config.id {
+                      if let Some(seq) = self.prev_sequences.get(&i) {
+                          let sequence = seq.get_sequence();
+                          for entry in sequence {
+                              if let Entry::Normal(n) = entry {
+                                  let id = n.as_slice().get_u64();
+                                  all_entries.push(id);
+                                  unique.insert(id);
+                              }
+                          }
+                      }
+                  }
+                  if self.active_config.id > 0 {
+                      let active_paxos = self.paxos_replicas.last().unwrap();
+                      let sequence = active_paxos
+                          .actor_ref()
+                          .ask_with(|promise| PaxosReplicaMsg::SequenceReq(Ask::new(promise, ())))
+                          .wait();
+                      for entry in sequence {
+                          if let Entry::Normal(n) = entry {
+                              let id = n.as_slice().get_u64();
+                              all_entries.push(id);
+                              unique.insert(id);
+                          }
+                      }
+                      let min = unique.iter().min();
+                      let max = unique.iter().max();
+                      debug!(
+                          self.ctx.log(),
+                          "Got SequenceReq: my seq_len: {}, unique: {}, min: {:?}, max: {:?}",
+                          all_entries.len(),
+                          unique.len(),
+                          min,
+                          max
+                      );
+                  } else {
+                      warn!(
+                          self.ctx.log(),
+                          "Got SequenceReq but no active paxos: {}", self.active_config.id
+                      );
+                  }
+                  let sr = SequenceResp::with(self.pid, all_entries);
+                  ask.reply(sr).expect("Failed to reply SequenceResp");
+              }
+
+               */
         }
         Handled::Ok
     }
@@ -1528,7 +1526,7 @@ struct PaxosReplica<T, S, B>
 where
     T: LogCommand,
     S: LogSnapshot<T>,
-    B: ReplicaStore<T, S>, 
+    B: ReplicaStore<T, S>,
 {
     ctx: ComponentContext<Self>,
     supervisor: ActorRef<PaxosCompMsg>,
@@ -1659,10 +1657,8 @@ where
         if promise > self.leader_ballot {
             self.leader_ballot = promise;
             self.current_leader = self.paxos.get_current_leader();
-            self.supervisor.tell(PaxosCompMsg::Leader(
-                self.config_id,
-                promise,
-            ));
+            self.supervisor
+                .tell(PaxosCompMsg::Leader(self.config_id, promise));
         }
         let decided_entries = self.paxos.read_decided_suffix(self.decided_idx);
         self.decided_idx = self.paxos.get_decided_idx();
@@ -1675,14 +1671,18 @@ where
                 for decided in ents {
                     match decided {
                         LogEntry::Decided(data) => {
-                            let pr = ProposalResp::with(data.create_response(), self.pid, promise.n as u64);
+                            let pr = ProposalResp::with(
+                                data.create_response(),
+                                self.pid,
+                                promise.n as u64,
+                            );
                             self.communication_port
                                 .trigger(CommunicatorMsg::ProposalResponse(pr));
                         }
                         LogEntry::StopSign(_) => {
                             // ignored
-                        },
-                        _ => unimplemented!()
+                        }
+                        _ => unimplemented!(),
                     }
                 }
             }
@@ -1714,7 +1714,7 @@ impl<T, S, B> Actor for PaxosReplica<T, S, B>
 where
     T: LogCommand,
     S: LogSnapshot<T>,
-    B: ReplicaStore<T, S>, 
+    B: ReplicaStore<T, S>,
 {
     type Message = PaxosReplicaMsg<T>;
 
@@ -1742,19 +1742,18 @@ where
             }
             PaxosReplicaMsg::LocalSegmentReq(requestor, seq_req, prev_seq_metadata) => {
                 let segment_idx = seq_req.idx;
-                let entries = self
-                    .paxos
-                    .read_entries(segment_idx.from..segment_idx.to);
+                let entries = self.paxos.read_entries(segment_idx.from..segment_idx.to);
                 let succeeded = entries.is_some();
                 let ents = match entries {
-                    Some(e) => {
-                        e.into_iter().map(|x| match x {
-                            LogEntry::Decided(d) => { d.clone() }
-                            LogEntry::Undecided(u) => { u.clone() }
-                            _ => unimplemented!()
-                        }).collect()
-                    }
-                    None => vec![]
+                    Some(e) => e
+                        .into_iter()
+                        .map(|x| match x {
+                            LogEntry::Decided(d) => d.clone(),
+                            LogEntry::Undecided(u) => u.clone(),
+                            _ => unimplemented!(),
+                        })
+                        .collect(),
+                    None => vec![],
                 };
                 let segment = SequenceSegment::with(segment_idx, ents);
                 let st =
@@ -1781,13 +1780,13 @@ where
                     // have not got stop from all peers yet
                     self.stop_ask = Some(ask);
                 }
-            }
-            #[cfg(test)]
-            PaxosReplicaMsg::SequenceReq(a) => {
-                // for testing only
-                let seq = self.paxos.get_sequence();
-                a.reply(seq).expect("Failed to reply to GetAllEntries");
-            }
+            } /*
+              #[cfg(test)]
+              PaxosReplicaMsg::SequenceReq(a) => {
+                  // for testing only
+                  let seq = self.paxos.get_sequence();
+                  a.reply(seq).expect("Failed to reply to GetAllEntries");
+              }*/
         }
         Handled::Ok
     }
@@ -1802,7 +1801,7 @@ impl<T, S, B> ComponentLifecycle for PaxosReplica<T, S, B>
 where
     T: LogCommand,
     S: LogSnapshot<T>,
-    B: ReplicaStore<T, S>, 
+    B: ReplicaStore<T, S>,
 {
     fn on_start(&mut self) -> Handled {
         let bc = BufferConfig::default();
@@ -1823,7 +1822,7 @@ impl<T, S, B> Require<CommunicationPort<T, S>> for PaxosReplica<T, S, B>
 where
     T: LogCommand,
     S: LogSnapshot<T>,
-    B: ReplicaStore<T, S>, 
+    B: ReplicaStore<T, S>,
 {
     fn handle(&mut self, msg: <CommunicationPort<T, S> as Port>::Indication) -> Handled {
         match msg {
@@ -1863,7 +1862,7 @@ impl<T, S, B> Require<BallotLeaderElection> for PaxosReplica<T, S, B>
 where
     T: LogCommand,
     S: LogSnapshot<T>,
-    B: ReplicaStore<T, S>, 
+    B: ReplicaStore<T, S>,
 {
     fn handle(&mut self, l: Ballot) -> Handled {
         debug!(

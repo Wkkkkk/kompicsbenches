@@ -2,7 +2,6 @@ extern crate raft as tikv_raft;
 
 use std::marker::PhantomData;
 // #[cfg(feature = "measure_io")]
-use crate::bench::atomic_broadcast::util::exp_util::*;
 #[cfg(feature = "measure_io")]
 use crate::bench::atomic_broadcast::util::io_metadata::IOMetaData;
 use crate::bench::atomic_broadcast::{
@@ -11,6 +10,7 @@ use crate::bench::atomic_broadcast::{
         raft::{RaftMsg, RawRaftSer},
         AtomicBroadcastMsg, ProposalResp, ReconfigurationResp, StopMsg as NetStopMsg, StopMsgDeser,
     },
+    util::exp_util::*,
 };
 use hashbrown::HashMap;
 use kompact::prelude::*;
@@ -20,7 +20,6 @@ use omnipaxos_core::messages::Message as RawPaxosMsg;
 use omnipaxos::messages::PaxosMsg;
 #[cfg(feature = "measure_io")]
 use std::time::SystemTime;
-use omnipaxos_core::ballot_leader_election::Ballot;
 use tikv_raft::prelude::Message as RawRaftMsg;
 
 #[derive(Clone, Debug)]
@@ -39,7 +38,9 @@ pub enum CommunicatorMsg<T: LogCommand, S: LogSnapshot<T>> {
     SendStop(u64, bool),
 }
 
-pub struct CommunicationPort<T: LogCommand, S: LogSnapshot<T>> { _p: PhantomData<(T, S)> }
+pub struct CommunicationPort<T: LogCommand, S: LogSnapshot<T>> {
+    _p: PhantomData<(T, S)>,
+}
 
 impl<T: LogCommand, S: LogSnapshot<T>> Port for CommunicationPort<T, S> {
     type Indication = AtomicBroadcastCompMsg<T, S>;
@@ -240,8 +241,6 @@ impl<T: LogCommand, S: LogSnapshot<T>> Actor for Communicator<T, S> {
     }
 
     fn receive_network(&mut self, m: NetMessage) -> Handled {
-        todo!()
-        /*
         let NetMessage { data, .. } = m;
         match_deser! {data {
             msg(r): RawRaftMsg [using RawRaftSer] => {
@@ -256,7 +255,7 @@ impl<T: LogCommand, S: LogSnapshot<T>> Actor for Communicator<T, S> {
                 }
                 self.atomic_broadcast_port.trigger(AtomicBroadcastCompMsg::RawRaftMsg(r));
             },
-            msg(p): RawPaxosMsg<Ballot> [using PaxosSer] => {
+            msg(p): RawPaxosMsg<T, S> [using PaxosSer<T, S>] => {
                 #[cfg(feature = "simulate_partition")] {
                     if self.disconnected_peers.contains(&p.from) {
                         return Handled::Ok;
@@ -278,7 +277,5 @@ impl<T: LogCommand, S: LogSnapshot<T>> Actor for Communicator<T, S> {
         }
         }
         Handled::Ok
-
-         */
     }
 }

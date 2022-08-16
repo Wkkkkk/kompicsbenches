@@ -1,11 +1,14 @@
 extern crate raft as tikv_raft;
 
-use crate::{bench::atomic_broadcast::benchmark_master::ReconfigurationPolicy, serialiser_ids};
+use crate::{
+    bench::atomic_broadcast::{
+        benchmark_master::ReconfigurationPolicy, util::exp_util::LogCommand,
+    },
+    serialiser_ids,
+};
 use kompact::prelude::*;
 use protobuf::{parse_from_bytes, Message};
 use rand::Rng;
-use crate::bench::atomic_broadcast::util::exp_util::LogCommand;
-use serde::{Serialize, de::DeserializeOwned};
 
 pub mod raft {
     extern crate raft as tikv_raft;
@@ -62,15 +65,13 @@ pub mod raft {
 }
 
 pub mod paxos {
-    use crate::{serialiser_ids};
-    use kompact::prelude::{Any, Buf, BufMut, Deserialiser, SerError, Serialisable};
-    use omnipaxos_core::{
-        ballot_leader_election::Ballot,
-        messages::*,
+    use crate::{
+        bench::atomic_broadcast::util::exp_util::{LogCommand, LogSnapshot, SnapshotType},
+        serialiser_ids,
     };
-    use std::{fmt::Debug, ops::Deref};
-    use std::marker::PhantomData;
-    use crate::bench::atomic_broadcast::util::exp_util::{LogCommand, LogSnapshot, SnapshotType};
+    use kompact::prelude::{Any, Buf, BufMut, Deserialiser, SerError, Serialisable};
+    use omnipaxos_core::{ballot_leader_election::Ballot, messages::*, util::SyncItem};
+    use std::{fmt::Debug, marker::PhantomData, ops::Deref};
 
     const PREPARE_ID: u8 = 1;
     const PROMISE_ID: u8 = 2;
@@ -90,89 +91,45 @@ pub mod paxos {
     // const DATA_SIZE: usize = 8;
     // const ENTRY_OVERHEAD: usize = 21 + DATA_SIZE;
 
-    pub struct PaxosSer<T: LogCommand> { _p: PhantomData<T> }
+    pub struct PaxosSer<T: LogCommand, S: LogSnapshot<T>> {
+        _p: PhantomData<T>,
+        _s: PhantomData<S>,
+    }
 
-    impl<T: LogCommand> PaxosSer<T> {
-        
+    impl<T: LogCommand, S: LogSnapshot<T>> PaxosSer<T, S> {
         fn serialise_ballot(ballot: &Ballot, buf: &mut dyn BufMut) {
             buf.put_u32(ballot.n);
             buf.put_u64(ballot.pid);
+            buf.put_u64(ballot.priority);
         }
 
-        fn serialise_entry(e: &T, buf: &mut dyn BufMut) {
-            todo!()
-            /*
-            match e {
-                Entry::Normal(d) => {
-                    buf.put_u8(NORMAL_ENTRY_ID);
-                    let data = d.as_slice();
-                    buf.put_u32(data.len() as u32);
-                    buf.put_slice(data);
-                }
-                Entry::StopSign(ss) => {
-                    buf.put_u8(SS_ENTRY_ID);
-                    buf.put_u32(ss.config_id);
-                    buf.put_u32(ss.nodes.len() as u32);
-                    ss.nodes.iter().for_each(|pid| buf.put_u64(*pid));
-                    match ss.skip_prepare_use_leader {
-                        Some(l) => {
-                            buf.put_u8(1);
-                            buf.put_u64(l.pid);
-                            Self::serialise_ballot(&l.round, buf);
-                        }
-                        _ => buf.put_u8(0),
-                    }
-                }
-            }
-            
-             */
+        fn serialise_entry_with_len(e: &T, buf: &mut dyn BufMut) {
+            let data = bincode::serialize(e).expect("Failed to serialize data");
+            buf.put_u32(data.len() as u32);
+            buf.put_slice(data.as_slice());
         }
 
         pub(crate) fn serialise_entries(ents: &[T], buf: &mut dyn BufMut) {
             buf.put_u32(ents.len() as u32);
             for e in ents {
-                Self::serialise_entry(e, buf);
+                Self::serialise_entry_with_len(e, buf);
             }
         }
 
         fn deserialise_ballot(buf: &mut dyn Buf) -> Ballot {
             let n = buf.get_u32();
             let pid = buf.get_u64();
-            Ballot::with(n, 0, pid)
+            let priority = buf.get_u64();
+            Ballot::with(n, priority, pid)
         }
 
         fn deserialise_entry(buf: &mut dyn Buf) -> T {
-            todo!()
-            /*
-            match buf.get_u8() {
-                NORMAL_ENTRY_ID => {
-                    let data_len = buf.get_u32() as usize;
-                    let mut data = vec![0; data_len];
-                    buf.copy_to_slice(&mut data);
-                    Entry::Normal(data)
-                }
-                SS_ENTRY_ID => {
-                    let config_id = buf.get_u32();
-                    let nodes_len = buf.get_u32() as usize;
-                    let mut nodes = Vec::with_capacity(nodes_len);
-                    for _ in 0..nodes_len {
-                        nodes.push(buf.get_u64());
-                    }
-                    let skip_prepare_use_leader = match buf.get_u8() {
-                        1 => {
-                            let pid = buf.get_u64();
-                            let ballot = Self::deserialise_ballot(buf);
-                            Some(Leader::with(pid, ballot))
-                        }
-                        _ => None,
-                    };
-                    let ss = StopSign::with(config_id, nodes, skip_prepare_use_leader);
-                    Entry::StopSign(ss)
-                }
-                error_id => panic!("Got unexpected id in deserialise_entry: {}", error_id),
-            }
-            
-             */
+            let data_len = buf.get_u32() as usize;
+            let mut data = vec![0; data_len];
+            buf.copy_to_slice(&mut data);
+            let deser = bincode::deserialize_from(data.as_slice().reader())
+                .expect("Failed to deserialize entry");
+            deser
         }
 
         pub fn deserialise_entries(buf: &mut dyn Buf) -> Vec<T> {
@@ -182,6 +139,36 @@ pub mod paxos {
                 ents.push(Self::deserialise_entry(buf));
             }
             ents
+        }
+
+        pub(crate) fn serialise_syncitem(sync_item: &SyncItem<T, S>, buf: &mut dyn BufMut) {
+            match sync_item {
+                SyncItem::Entries(ents) => {
+                    buf.put_u8(1);
+                    PaxosSer::<T, S>::serialise_entries(ents, buf);
+                }
+                SyncItem::Snapshot(_) => {
+                    unimplemented!()
+                }
+                SyncItem::None => {
+                    buf.put_u8(0);
+                }
+            }
+        }
+
+        pub(crate) fn deserialise_syncitem(buf: &mut dyn Buf) -> Result<SyncItem<T, S>, SerError> {
+            match buf.get_u8() {
+                0 => Ok(SyncItem::None),
+                1 => {
+                    let ents = Self::deserialise_entries(buf);
+                    Ok(SyncItem::Entries(ents))
+                }
+                _ => {
+                    return Err(SerError::InvalidType(
+                        "Found unkown id but expected Option<SyncItem>".into(),
+                    ));
+                }
+            }
         }
     }
 
@@ -196,7 +183,7 @@ pub mod paxos {
         }
     }
 
-    impl<T: LogCommand, S: LogSnapshot<T>>  Serialisable for PaxosMsgWrapper<T, S> {
+    impl<T: LogCommand, S: LogSnapshot<T>> Serialisable for PaxosMsgWrapper<T, S> {
         fn ser_id(&self) -> u64 {
             serialiser_ids::PAXOS_ID
         }
@@ -206,8 +193,6 @@ pub mod paxos {
         }
 
         fn serialise(&self, buf: &mut dyn BufMut) -> Result<(), SerError> {
-            todo!()
-            /*
             buf.put_u64(self.from);
             buf.put_u64(self.to);
             match &self.msg {
@@ -218,62 +203,67 @@ pub mod paxos {
                     buf.put_u8(PREPARE_ID);
                     buf.put_u64(p.ld);
                     buf.put_u64(p.la);
-                    PaxosSer::serialise_ballot(&p.n, buf);
-                    PaxosSer::serialise_ballot(&p.n_accepted, buf);
+                    PaxosSer::<T, S>::serialise_ballot(&p.n, buf);
+                    PaxosSer::<T, S>::serialise_ballot(&p.n_accepted, buf);
                 }
                 PaxosMsg::Promise(p) => {
                     buf.put_u8(PROMISE_ID);
                     buf.put_u64(p.ld);
                     buf.put_u64(p.la);
-                    PaxosSer::serialise_ballot(&p.n, buf);
-                    PaxosSer::serialise_ballot(&p.n_accepted, buf);
-                    if let Some(x) = &p.sync_item {
-                        match x {
-                            SyncItem::Entries(ents) => {
-                                buf.put_slice(ents.as_slice())
-                            }
-                            SyncItem::Snapshot(_) => {}
-                            SyncItem::None => {}
+                    PaxosSer::<T, S>::serialise_ballot(&p.n, buf);
+                    PaxosSer::<T, S>::serialise_ballot(&p.n_accepted, buf);
+                    match &p.sync_item {
+                        Some(sync_item) => {
+                            buf.put_u8(1);
+                            PaxosSer::<T, S>::serialise_syncitem(sync_item, buf);
                         }
+                        None => buf.put_u8(0),
                     }
-                    PaxosSer::serialise_entries(&p.sfx, buf);
                 }
                 PaxosMsg::AcceptSync(acc_sync) => {
                     buf.put_u8(ACCEPTSYNC_ID);
                     buf.put_u64(acc_sync.sync_idx);
-                    PaxosSer::serialise_ballot(&acc_sync.n, buf);
-                    PaxosSer::serialise_entries(&acc_sync.entries, buf);
+                    PaxosSer::<T, S>::serialise_ballot(&acc_sync.n, buf);
+                    match &acc_sync.decide_idx {
+                        Some(idx) => {
+                            buf.put_u8(1);
+                            buf.put_u64(*idx);
+                        }
+                        None => buf.put_u8(0),
+                    }
+                    PaxosSer::<T, S>::serialise_syncitem(&acc_sync.sync_item, buf);
+                    match &acc_sync.stopsign {
+                        Some(_ss) => unimplemented!(),
+                        None => {}
+                    }
                 }
                 PaxosMsg::FirstAccept(f) => {
                     buf.put_u8(FIRSTACCEPT_ID);
-                    PaxosSer::serialise_ballot(&f.n, buf);
-                    PaxosSer::serialise_entries(&f.entries, buf);
+                    PaxosSer::<T, S>::serialise_ballot(&f.n, buf);
                 }
                 PaxosMsg::AcceptDecide(a) => {
                     buf.put_u8(ACCEPTDECIDE_ID);
                     buf.put_u64(a.ld);
-                    PaxosSer::serialise_ballot(&a.n, buf);
-                    PaxosSer::serialise_entries(&a.entries, buf);
+                    PaxosSer::<T, S>::serialise_ballot(&a.n, buf);
+                    PaxosSer::<T, S>::serialise_entries(&a.entries, buf);
                 }
                 PaxosMsg::Accepted(acc) => {
                     buf.put_u8(ACCEPTED_ID);
-                    PaxosSer::serialise_ballot(&acc.n, buf);
+                    PaxosSer::<T, S>::serialise_ballot(&acc.n, buf);
                     buf.put_u64(acc.la);
                 }
                 PaxosMsg::Decide(d) => {
                     buf.put_u8(DECIDE_ID);
-                    PaxosSer::serialise_ballot(&d.n, buf);
+                    PaxosSer::<T, S>::serialise_ballot(&d.n, buf);
                     buf.put_u64(d.ld);
                 }
                 PaxosMsg::ProposalForward(entries) => {
                     buf.put_u8(PROPOSALFORWARD_ID);
-                    PaxosSer::serialise_entries(entries, buf);
+                    PaxosSer::<T, S>::serialise_entries(entries, buf);
                 }
-                _ => todo!("Other message types")
+                _ => unimplemented!("Other message types"),
             }
             Ok(())
-            
-             */
         }
 
         fn local(self: Box<Self>) -> Result<Box<dyn Any + Send>, Box<dyn Serialisable>> {
@@ -281,12 +271,10 @@ pub mod paxos {
         }
     }
 
-    impl<T: LogCommand> Deserialiser<Message<T, SnapshotType>> for PaxosSer<T> {
+    impl<T: LogCommand, S: LogSnapshot<T>> Deserialiser<Message<T, S>> for PaxosSer<T, S> {
         const SER_ID: u64 = serialiser_ids::PAXOS_ID;
 
-        fn deserialise(buf: &mut dyn Buf) -> Result<Message<T, SnapshotType>, SerError> {
-            todo!()
-            /*
+        fn deserialise(buf: &mut dyn Buf) -> Result<Message<T, S>, SerError> {
             let from = buf.get_u64();
             let to = buf.get_u64();
             let msg = match buf.get_u8() {
@@ -304,15 +292,38 @@ pub mod paxos {
                     let la = buf.get_u64();
                     let n = Self::deserialise_ballot(buf);
                     let n_accepted = Self::deserialise_ballot(buf);
-                    let sfx = Self::deserialise_entries(buf);
-                    let prom = Promise::with(n, n_accepted, sfx, ld, la);
+                    let sync_item = match buf.get_u8() {
+                        0 => None,
+                        1 => Some(
+                            Self::deserialise_syncitem(buf)
+                                .expect("Failed to deserialize SyncItem"),
+                        ),
+                        _ => {
+                            return Err(SerError::InvalidType(
+                                "Found unkown id but expected Option<SyncItem>".into(),
+                            ));
+                        }
+                    };
+                    let stopsign = None;
+                    let prom = Promise::with(n, n_accepted, sync_item, ld, la, stopsign);
                     Message::with(from, to, PaxosMsg::Promise(prom))
                 }
                 ACCEPTSYNC_ID => {
                     let sync_idx = buf.get_u64();
                     let n = Self::deserialise_ballot(buf);
-                    let sfx = Self::deserialise_entries(buf);
-                    let acc_sync = AcceptSync::with(n, sfx, sync_idx);
+                    let decide_idx = match buf.get_u8() {
+                        0 => None,
+                        1 => Some(buf.get_u64()),
+                        _ => {
+                            return Err(SerError::InvalidType(
+                                "Found unkown id but expected decide_idx".into(),
+                            ));
+                        }
+                    };
+                    let sync_item =
+                        Self::deserialise_syncitem(buf).expect("Failed to deserialize SyncItem");
+                    let stopsign = None;
+                    let acc_sync = AcceptSync::with(n, sync_item, sync_idx, decide_idx, stopsign);
                     Message::with(from, to, PaxosMsg::AcceptSync(acc_sync))
                 }
                 ACCEPTDECIDE_ID => {
@@ -324,14 +335,14 @@ pub mod paxos {
                 }
                 ACCEPTED_ID => {
                     let n = Self::deserialise_ballot(buf);
-                    let ld = buf.get_u64();
-                    let acc = Accepted::with(n, ld);
+                    let la = buf.get_u64();
+                    let acc = Accepted::with(n, la);
                     Message::with(from, to, PaxosMsg::Accepted(acc))
                 }
                 DECIDE_ID => {
                     let n = Self::deserialise_ballot(buf);
                     let ld = buf.get_u64();
-                    let d = Decide::with(ld, n);
+                    let d = Decide::with(n, ld);
                     Message::with(from, to, PaxosMsg::Decide(d))
                 }
                 PROPOSALFORWARD_ID => {
@@ -341,8 +352,7 @@ pub mod paxos {
                 }
                 FIRSTACCEPT_ID => {
                     let n = Self::deserialise_ballot(buf);
-                    let entries = Self::deserialise_entries(buf);
-                    let f = FirstAccept::with(n, entries);
+                    let f = FirstAccept::with(n);
                     Message::with(from, to, PaxosMsg::FirstAccept(f))
                 }
                 _ => {
@@ -352,8 +362,6 @@ pub mod paxos {
                 }
             };
             Ok(msg)
-          
-             */
         }
     }
 
@@ -406,12 +414,12 @@ pub mod paxos {
     }
 
     #[derive(Clone, Debug)]
-    pub struct SegmentTransfer<T: LogCommand>  {
+    pub struct SegmentTransfer<T: LogCommand> {
         pub config_id: u32,
         pub succeeded: bool,
         pub metadata: SequenceMetaData,
         pub segment: SequenceSegment<T>,
-        _p: PhantomData<T>
+        _p: PhantomData<T>,
     }
 
     impl<T: LogCommand> SegmentTransfer<T> {
@@ -426,7 +434,7 @@ pub mod paxos {
                 succeeded,
                 metadata,
                 segment,
-                _p: PhantomData
+                _p: PhantomData,
             }
         }
     }
@@ -512,7 +520,7 @@ pub mod paxos {
 
     pub struct ReconfigSer;
 
-    impl<T: LogCommand>  Serialisable for ReconfigurationMsg<T> {
+    impl<T: LogCommand> Serialisable for ReconfigurationMsg<T> {
         fn ser_id(&self) -> u64 {
             serialiser_ids::RECONFIG_ID
         }
@@ -542,7 +550,7 @@ pub mod paxos {
                         Some(l) => {
                             buf.put_u8(1);
                             buf.put_u64(l.pid);
-                            PaxosSer::serialise_ballot(&l.round, buf);
+                            PaxosSer::<T, S>::serialise_ballot(&l.round, buf);
                         }
                         None => buf.put_u8(0),
                     }
@@ -563,11 +571,11 @@ pub mod paxos {
                     buf.put_u64(st.segment.get_to_idx());
                     buf.put_u32(st.metadata.config_id);
                     buf.put_u64(st.metadata.len);
-                    PaxosSer::serialise_entries(st.segment.entries.as_slice(), buf);
+                    PaxosSer::<T, S>::serialise_entries(st.segment.entries.as_slice(), buf);
                 }
             }
             Ok(())
-            
+
              */
         }
 
@@ -575,10 +583,12 @@ pub mod paxos {
             Ok(self)
         }
     }
-    impl<T: LogCommand>  Deserialiser<ReconfigurationMsg<T>> for ReconfigSer {
+    impl<T: LogCommand> Deserialiser<ReconfigurationMsg<T>> for ReconfigSer {
         const SER_ID: u64 = serialiser_ids::RECONFIG_ID;
 
         fn deserialise(buf: &mut dyn Buf) -> Result<ReconfigurationMsg<T>, SerError> {
+            todo!()
+            /*
             match buf.get_u8() {
                 RECONFIG_INIT_ID => {
                     let config_id = buf.get_u32();
@@ -632,7 +642,7 @@ pub mod paxos {
                     let idx = SegmentIndex::with(from_idx, to_idx);
                     let metadata_config_id = buf.get_u32();
                     let metadata_seq_len = buf.get_u64();
-                    let entries = PaxosSer::deserialise_entries(buf);
+                    let entries = PaxosSer::<T, S>::deserialise_entries(buf);
                     let metadata = SequenceMetaData::with(metadata_config_id, metadata_seq_len);
                     let segment = SequenceSegment::with(idx, entries);
                     let st = SegmentTransfer::with(config_id, succeeded, metadata, segment);
@@ -642,12 +652,14 @@ pub mod paxos {
                     "Found unkown id but expected ReconfigurationMsg".into(),
                 )),
             }
+
+             */
         }
     }
 
     pub mod ballot_leader_election {
-        use omnipaxos_core::ballot_leader_election::Ballot;
         use super::super::*;
+        use omnipaxos_core::ballot_leader_election::Ballot;
 
         #[derive(Clone, Debug)]
         pub enum HeartbeatMsg {
@@ -751,8 +763,8 @@ pub mod paxos {
     }
 
     pub mod vr_leader_election {
-        use omnipaxos_core::ballot_leader_election::Ballot;
         use super::super::*;
+        use omnipaxos_core::ballot_leader_election::Ballot;
 
         #[derive(Clone, Debug)]
         pub enum VRMsg {
@@ -825,8 +837,8 @@ pub mod paxos {
     }
 
     pub mod mp_leader_election {
-        use omnipaxos_core::ballot_leader_election::Ballot;
         use super::super::*;
+        use omnipaxos_core::ballot_leader_election::Ballot;
 
         #[derive(Clone, Debug)]
         pub enum HeartbeatMsg {
@@ -1097,7 +1109,6 @@ impl<T: LogCommand> Serialisable for AtomicBroadcastMsg<T> {
     }
 }
 
-
 /*
 impl Serialisable for AtomicBroadcastMsg<Vec<u8>> {
     fn ser_id(&self) -> u64 {
@@ -1169,7 +1180,8 @@ impl<T: LogCommand> Deserialiser<AtomicBroadcastMsg<T>> for AtomicBroadcastDeser
     fn deserialise(buf: &mut dyn Buf) -> Result<AtomicBroadcastMsg<T>, SerError> {
         match buf.get_u8() {
             PROPOSAL_ID => {
-                let data: T = bincode::deserialize_from(buf.reader()).expect("Failed to deserialize data");
+                let data: T =
+                    bincode::deserialize_from(buf.reader()).expect("Failed to deserialize data");
                 let proposal = Proposal::with(data);
                 Ok(AtomicBroadcastMsg::Proposal(proposal))
             }
@@ -1195,7 +1207,8 @@ impl<T: LogCommand> Deserialiser<AtomicBroadcastMsg<T>> for AtomicBroadcastDeser
             PROPOSALRESP_ID => {
                 let latest_leader = buf.get_u64();
                 let leader_round = buf.get_u64();
-                let data: T::Response = bincode::deserialize_from(buf.reader()).expect("Failed to deserialize response data");
+                let data: T::Response = bincode::deserialize_from(buf.reader())
+                    .expect("Failed to deserialize response data");
                 let pr = ProposalResp {
                     data,
                     latest_leader,
