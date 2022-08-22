@@ -236,11 +236,12 @@ object Benchmarks extends ParameterDescriptionImplicits {
 
   /*** split into different parameter spaces as some parameters are dependent on each other ***/
   private val atomicBroadcastTestNodes = List(3);
-  private val atomicBroadcastTestProposals = List(10L.k);
+  // private val atomicBroadcastTestProposals = List(10L.k);
+  private val atomicBroadcastTestProposalsFilePath = "/home/kunwu/raw_queries.txt";
   private val atomicBroadcastTestConcurrentProposals = List(200L);
 
   private val atomicBroadcastNodes = List(3, 5);
-  private val atomicBroadcastProposals = List(5L.mio);
+  // private val atomicBroadcastProposals = List(5L.mio);
   private val atomicBroadcastConcurrentProposals = List(50L.k);
 
   private val algorithms = List("paxos", "raft_pv_qc");
@@ -252,7 +253,7 @@ object Benchmarks extends ParameterDescriptionImplicits {
     .cross(
       algorithms,
       atomicBroadcastTestNodes,
-      atomicBroadcastTestProposals,
+      // atomicBroadcastTestProposals,
       atomicBroadcastTestConcurrentProposals,
       List("off"),
       List("none"),
@@ -263,7 +264,7 @@ object Benchmarks extends ParameterDescriptionImplicits {
     .cross(
       algorithms,
       atomicBroadcastTestNodes,
-      atomicBroadcastTestProposals,
+      // atomicBroadcastTestProposals,
       atomicBroadcastTestConcurrentProposals,
       reconfig,
       reconfig_policy,
@@ -276,7 +277,7 @@ object Benchmarks extends ParameterDescriptionImplicits {
     .cross(
       algorithms,
       atomicBroadcastNodes,
-      atomicBroadcastProposals,
+      // atomicBroadcastProposals,
       atomicBroadcastConcurrentProposals,
       List("off"),
       List("none"),
@@ -287,7 +288,7 @@ object Benchmarks extends ParameterDescriptionImplicits {
     .cross(
       algorithms,
       atomicBroadcastNodes,
-      atomicBroadcastProposals,
+      // atomicBroadcastProposals,
       atomicBroadcastConcurrentProposals,
       reconfig,
       reconfig_policy,
@@ -315,11 +316,11 @@ object Benchmarks extends ParameterDescriptionImplicits {
     },
     space = atomicBroadcastNormalSpace
       .msg[AtomicBroadcastRequest] {
-        case (a, nn, np, cp, r, rp, ns) =>
+        case (a, nn, cp, r, rp, ns) =>
           AtomicBroadcastRequest(
             algorithm = a,
             numberOfNodes = nn,
-            numberOfProposals = np,
+            filePath = atomicBroadcastTestProposalsFilePath,
             concurrentProposals = cp,
             reconfiguration = r,
             reconfigPolicy = rp,
@@ -328,11 +329,11 @@ object Benchmarks extends ParameterDescriptionImplicits {
       },
     testSpace = atomicBroadcastNormalTestSpace
       .msg[AtomicBroadcastRequest] {
-        case (a, nn, np, cp, r, rp, ns) =>
+        case (a, nn, cp, r, rp, ns) =>
           AtomicBroadcastRequest(
             algorithm = a,
             numberOfNodes = nn,
-            numberOfProposals = np,
+            filePath = atomicBroadcastTestProposalsFilePath,
             concurrentProposals = cp,
             reconfiguration = r,
             reconfigPolicy = rp,

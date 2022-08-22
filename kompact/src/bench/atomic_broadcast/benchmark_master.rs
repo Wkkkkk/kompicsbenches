@@ -43,14 +43,14 @@ pub enum NetworkScenario {
 pub struct AtomicBroadcastMaster {
     num_nodes: Option<u64>,
     num_nodes_needed: Option<u64>,
-    num_proposals: Option<u64>,
+    file_path: Option<String>,
     concurrent_proposals: Option<u64>,
     reconfiguration: Option<(ReconfigurationPolicy, Vec<u64>)>,
     network_scenario: Option<NetworkScenario>,
     system: Option<KompactSystem>,
     finished_latch: Option<Arc<CountdownEvent>>,
     iteration_id: u32,
-    client_comp: Option<Arc<Component<Client<EntryType>>>>,
+    client_comp: Option<Arc<Component<Client<StoreCommand>>>>,
     partitioning_actor: Option<Arc<Component<PartitioningActor>>>,
     latency_hist: Option<Histogram<u64>>,
     num_timed_out: Vec<u64>,
@@ -65,7 +65,7 @@ impl AtomicBroadcastMaster {
         AtomicBroadcastMaster {
             num_nodes: None,
             num_nodes_needed: None,
-            num_proposals: None,
+            file_path: None,
             concurrent_proposals: None,
             reconfiguration: None,
             network_scenario: None,
@@ -129,7 +129,7 @@ impl AtomicBroadcastMaster {
         client_timeout: Duration,
         preloaded_log_size: u64,
         leader_election_latch: Arc<CountdownEvent>,
-    ) -> (Arc<Component<Client<EntryType>>>, ActorPath) {
+    ) -> (Arc<Component<Client<StoreCommand>>>, ActorPath) {
         let system = self.system.as_ref().unwrap();
         let finished_latch = self.finished_latch.clone().unwrap();
         /*** Setup client ***/
@@ -138,7 +138,7 @@ impl AtomicBroadcastMaster {
         let (client_comp, unique_reg_f) = system.create_and_register(|| {
             Client::with(
                 initial_config,
-                self.num_proposals.unwrap(),
+                self.file_path.as_ref().unwrap().clone(),
                 self.concurrent_proposals.unwrap(),
                 nodes_id,
                 network_scenario,
@@ -171,12 +171,12 @@ impl AtomicBroadcastMaster {
                 num_clients, c.number_of_nodes
             )));
         }
-        if c.concurrent_proposals > c.number_of_proposals {
-            return Err(BenchmarkError::InvalidTest(format!(
-                "Concurrent proposals: {} should be less or equal to number of proposals: {}",
-                c.concurrent_proposals, c.number_of_proposals
-            )));
-        }
+        // if c.concurrent_proposals > c.number_of_proposals {
+        //     return Err(BenchmarkError::InvalidTest(format!(
+        //         "Concurrent proposals: {} should be less or equal to number of proposals: {}",
+        //         c.concurrent_proposals, c.number_of_proposals
+        //     )));
+        // }
         match &c.algorithm.to_lowercase() {
             a if a != "paxos"
                 && a != "raft"
@@ -521,7 +521,7 @@ impl DistributedBenchmarkMaster for AtomicBroadcastMaster {
         let experiment_str = create_experiment_str(&c);
         self.num_nodes = Some(c.number_of_nodes);
         self.experiment_str = Some(experiment_str.clone());
-        self.num_proposals = Some(c.number_of_proposals);
+        self.file_path = Some(c.file_path.clone());
         self.concurrent_proposals = Some(c.concurrent_proposals);
         self.meta_results_sub_dir = Some(create_metaresults_sub_dir(
             c.number_of_nodes,
@@ -655,7 +655,7 @@ impl DistributedBenchmarkMaster for AtomicBroadcastMaster {
             self.num_nodes_needed = None;
             self.reconfiguration = None;
             self.concurrent_proposals = None;
-            self.num_proposals = None;
+            self.file_path = None;
             self.experiment_str = None;
             self.meta_results_sub_dir = None;
             self.num_timed_out.clear();
