@@ -50,7 +50,7 @@ pub struct AtomicBroadcastMaster {
     system: Option<KompactSystem>,
     finished_latch: Option<Arc<CountdownEvent>>,
     iteration_id: u32,
-    client_comp: Option<Arc<Component<Client<EntryType>>>>,
+    client_comp: Option<Arc<Component<Client<StoreCommand>>>>,
     partitioning_actor: Option<Arc<Component<PartitioningActor>>>,
     latency_hist: Option<Histogram<u64>>,
     num_timed_out: Vec<u64>,
@@ -129,7 +129,7 @@ impl AtomicBroadcastMaster {
         client_timeout: Duration,
         preloaded_log_size: u64,
         leader_election_latch: Arc<CountdownEvent>,
-    ) -> (Arc<Component<Client<EntryType>>>, ActorPath) {
+    ) -> (Arc<Component<Client<StoreCommand>>>, ActorPath) {
         let system = self.system.as_ref().unwrap();
         let finished_latch = self.finished_latch.clone().unwrap();
         /*** Setup client ***/

@@ -5,7 +5,7 @@ pub(crate) mod exp_util {
     use hocon::HoconLoader;
     use kompact::prelude::Buf;
     use omnipaxos_core::storage::{memory_storage::MemoryStorage, Entry, Snapshot, Storage};
-    use serde::{de::DeserializeOwned, Serialize};
+    use serde::{de::DeserializeOwned, Serialize, Deserialize};
     use std::{fmt::Debug, hash::Hash, path::PathBuf, time::Duration};
 
     pub const TCP_NODELAY: bool = true;
@@ -22,7 +22,7 @@ pub(crate) mod exp_util {
     {
         type Response: Serialize + DeserializeOwned + Send + Debug + Clone + Eq + Hash;
 
-        fn with(id: u64) -> Self;
+        fn with(id: u64, sql: String) -> Self;
         fn create_response(&self) -> Self::Response;
     }
     pub trait LogSnapshot<T: LogCommand>: Snapshot<T> + Send + Sync + 'static + Debug {}
@@ -35,7 +35,7 @@ pub(crate) mod exp_util {
     impl LogCommand for EntryType {
         type Response = u64;
 
-        fn with(id: u64) -> Self {
+        fn with(id: u64, _sql: String) -> Self {
             bincode::serialize(&id).expect("Failed to serialize data id")
         }
 
@@ -45,12 +45,29 @@ pub(crate) mod exp_util {
         }
     }
 
+    #[derive(Serialize, Deserialize, Clone, Debug)]
+    pub struct StoreCommand {
+        pub id: u64,
+        pub sql: String,
+    }
+    impl LogCommand for StoreCommand {
+        type Response = u64;
+
+        fn with(id: u64, sql: String) -> Self {
+            StoreCommand { id, sql}
+        }
+
+        fn create_response(&self) -> Self::Response {
+            self.id
+        }
+    }
+
     pub type SnapshotType = ();
-    pub type PaxosStorageType = MemoryStorage<EntryType, SnapshotType>;
+    pub type PaxosStorageType = MemoryStorage<StoreCommand, SnapshotType>;
 
     // impl LogSnapshot<EntryType> for SnapshotType {}
-    impl ReplicaStore<EntryType, SnapshotType> for PaxosStorageType {}
-    impl LogSnapshot<EntryType> for () {}
+    impl ReplicaStore<StoreCommand, SnapshotType> for PaxosStorageType {}
+    impl LogSnapshot<StoreCommand> for () {}
 
     pub struct ExperimentParams {
         pub election_timeout: u64,

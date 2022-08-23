@@ -14,6 +14,8 @@ use quanta::{Clock, Instant};
 use std::{
     sync::Arc,
     time::{Duration, SystemTime},
+    fs::{File, OpenOptions},
+    io::{prelude::*, BufReader},
 };
 use synchronoise::{event::CountdownError, CountdownEvent};
 
@@ -91,6 +93,7 @@ impl MetaResults {
 #[derive(ComponentDefinition)]
 pub struct Client<T: LogCommand> {
     ctx: ComponentContext<Self>,
+    proposals: Vec<String>,
     num_proposals: u64,
     num_concurrent_proposals: u64,
     num_proposals_sent: u64,
@@ -133,6 +136,18 @@ pub struct Client<T: LogCommand> {
     recover_periodic_partition: bool,
 }
 
+fn read_from_file(path: String) -> Vec<String> {
+    println!("Reading file: {}", path);
+    let file = File::open(path).expect("no such file");
+    let reader = BufReader::new(file);
+    let all_lines = reader.lines()
+                        .map(|l| l.unwrap())
+                        .take(10000)
+                        .collect::<Vec<_>>();
+
+    all_lines
+}
+
 impl<T: LogCommand> Client<T> {
     pub fn with(
         initial_config: Vec<u64>,
@@ -147,8 +162,11 @@ impl<T: LogCommand> Client<T> {
         finished_latch: Arc<CountdownEvent>,
     ) -> Self {
         let clock = Clock::new();
+        let proposals = read_from_file("/home/kunwu/raw_queries.txt".to_string());
+        let num_proposals = proposals.len() as u64 - 1;
         Self {
             ctx: ComponentContext::uninitialised(),
+            proposals: proposals,
             num_proposals: num_proposals + preloaded_log_size,
             num_concurrent_proposals,
             num_proposals_sent: preloaded_log_size,
@@ -192,7 +210,10 @@ impl<T: LogCommand> Client<T> {
     }
 
     fn create_proposal_data(&mut self, id: u64) -> T {
-        T::with(id) // TODO Change this for custom experiments
+        let sql = self.proposals[id as usize].clone();
+        let cmd = T::with(id, sql);
+
+        cmd
     }
 
     fn propose_normal(&mut self, id: u64) -> T::Response {
