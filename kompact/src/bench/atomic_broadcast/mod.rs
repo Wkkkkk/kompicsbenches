@@ -8,6 +8,7 @@ mod messages;
 mod mp_le;
 mod paxos;
 mod raft;
+mod preprocessing;
 mod storage;
 mod util;
 mod vr_le;

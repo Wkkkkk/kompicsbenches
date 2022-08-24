@@ -240,7 +240,7 @@ impl<T: LogCommand> Client<T> {
         );
         let rp = ReconfigurationProposal::with(*policy, reconfig.clone());
         node.tell_serialised(
-            AtomicBroadcastMsg::<EntryType>::ReconfigurationProposal(rp),
+            AtomicBroadcastMsg::<StoreCommand>::ReconfigurationProposal(rp),
             self,
         )
         .expect("Should serialise reconfig Proposal");
