@@ -316,10 +316,11 @@ object Benchmarks extends ParameterDescriptionImplicits {
     },
     space = atomicBroadcastNormalSpace
       .msg[AtomicBroadcastRequest] {
-        case (a, nn, cp, r, rp, ns) =>
+        case (a, nn, np, cp, r, rp, ns) =>
           AtomicBroadcastRequest(
             algorithm = a,
             numberOfNodes = nn,
+            numberOfProposals = np,
             concurrentProposals = cp,
             reconfiguration = r,
             reconfigPolicy = rp,
@@ -329,10 +330,11 @@ object Benchmarks extends ParameterDescriptionImplicits {
       },
     testSpace = atomicBroadcastNormalTestSpace
       .msg[AtomicBroadcastRequest] {
-        case (a, nn, cp, r, rp, ns) =>
+        case (a, nn, np, cp, r, rp, ns) =>
           AtomicBroadcastRequest(
             algorithm = a,
             numberOfNodes = nn,
+            numberOfProposals = np,
             concurrentProposals = cp,
             reconfiguration = r,
             reconfigPolicy = rp,

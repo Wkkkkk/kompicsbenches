@@ -140,7 +140,7 @@ impl AtomicBroadcastMaster {
         let (client_comp, unique_reg_f) = system.create_and_register(|| {
             Client::with(
                 initial_config,
-                self.file_path.as_ref().unwrap().clone(),
+                self.num_proposals.unwrap(),
                 self.concurrent_proposals.unwrap(),
                 self.local_proposal_file.as_ref().unwrap().clone(),
                 nodes_id,
@@ -524,7 +524,7 @@ impl DistributedBenchmarkMaster for AtomicBroadcastMaster {
         let experiment_str = create_experiment_str(&c);
         self.num_nodes = Some(c.number_of_nodes);
         self.experiment_str = Some(experiment_str.clone());
-        self.num_proposals = Some(c.number_of_proposals.clone());
+        self.num_proposals = Some(c.number_of_proposals);
         self.local_proposal_file = Some(c.file_path.clone());
         self.concurrent_proposals = Some(c.concurrent_proposals);
         self.meta_results_sub_dir = Some(create_metaresults_sub_dir(
