@@ -6,10 +6,10 @@ pub(crate) mod exp_util {
     use kompact::prelude::Buf;
     use omnipaxos_core::storage::{memory_storage::MemoryStorage, Entry, Snapshot, Storage};
     use crate::bench::atomic_broadcast::preprocessing::{split_query, merge_query};
-    // use lecar::controller::Controller;
+    use lecar::controller::Controller;
     use serde::{de::DeserializeOwned, Serialize, Deserialize};
     use std::{fmt::Debug, hash::Hash, path::PathBuf, time::Duration};
-    // use std::time::Instant;
+    use std::time::Instant;
 
     pub const TCP_NODELAY: bool = true;
     pub const CONFIG_PATH: &str = "./configs/atomic_broadcast.conf";
@@ -34,24 +34,18 @@ pub(crate) mod exp_util {
     {
     }
 
-    pub type EntryType = Vec<u8>;
-    impl LogCommand for EntryType {
-        type Response = u64;
+    // pub type EntryType = Vec<u8>;
+    // impl LogCommand for EntryType {
+    //     type Response = u64;
 
-        fn with(id: u64, _sql: String) -> Self {
-            bincode::serialize(&id).expect("Failed to serialize data id")
-        }
+    //     fn with(id: u64, _sql: String) -> Self {
+    //         bincode::serialize(&id).expect("Failed to serialize data id")
+    //     }
 
-        fn create_response(&self) -> Self::Response {
-            bincode::deserialize_from(self.as_slice().reader())
-                .expect("Failed to deserialize data id")
-        }
-    }
-
-    // impl Compressable for EntryType {
-    //     fn compress(&mut self, cache: &mut Controller) {}
-
-    //     fn decompress(&mut self, cache: &mut Controller) {}
+    //     fn create_response(&self) -> Self::Response {
+    //         bincode::deserialize_from(self.as_slice().reader())
+    //             .expect("Failed to deserialize data id")
+    //     }
     // }
 
     #[derive(Serialize, Deserialize, Clone, Debug)]
@@ -71,37 +65,37 @@ pub(crate) mod exp_util {
         }
     }
 
-    // impl Compressable for StoreCommand {
-        // fn compress(&mut self, cache: &mut Controller) {
-            // let now = Instant::now();
-            // let (template, parameters) = split_query(&self.sql);
-            // let len_tuple = cache.len();
-            // cache.counter.size = (len_tuple.0 + len_tuple.1 + len_tuple.2) as u64;
-            // cache.counter.num_queries += 1;
-            // cache.counter.raw_messsages_size += self.sql.len() as u64;
+    impl Entry for StoreCommand {
+        // fn encode(&mut self, cache: &mut Controller) {
+        //     let now = Instant::now();
+        //     let (template, parameters) = split_query(&self.sql);
+        //     let len_tuple = cache.len();
+        //     cache.counter.size = (len_tuple.0 + len_tuple.1 + len_tuple.2) as u64;
+        //     cache.counter.num_queries += 1;
+        //     cache.counter.raw_messsages_size += self.sql.len() as u64;
 
-            // if let Some(index) = cache.get_index_of(&template) {
-            //     // exists in cache
-            //     // send index and parameters
-            //     let compressed = format!("1*|*{}*|*{}", index.to_string(), parameters);
+        //     if let Some(index) = cache.get_index_of(&template) {
+        //         // exists in cache
+        //         // send index and parameters
+        //         let compressed = format!("1*|*{}*|*{}", index.to_string(), parameters);
 
-            //     self.sql = compressed;
-            //     cache.counter.hits += 1;
-            // } else {
-            //     // send template and parameters
-            //     let uncompressed = format!("0*|*{}*|*{}", template, parameters);
+        //         self.sql = compressed;
+        //         cache.counter.hits += 1;
+        //     } else {
+        //         // send template and parameters
+        //         let uncompressed = format!("0*|*{}*|*{}", template, parameters);
 
-            //     self.sql = uncompressed;
-            //     cache.counter.misses += 1;
-            // }
-            // let elapsed = now.elapsed();
-            // cache.counter.compressed_size += self.sql.len() as u64;
-            // cache.counter.compression_time += elapsed.as_micros() as u64;
-            // cache.counter.memory_size = cache.print_size() as u64;
+        //         self.sql = uncompressed;
+        //         cache.counter.misses += 1;
+        //     }
+        //     let elapsed = now.elapsed();
+        //     cache.counter.compressed_size += self.sql.len() as u64;
+        //     cache.counter.compression_time += elapsed.as_micros() as u64;
+        //     cache.counter.memory_size = cache.print_size() as u64;
 
-            // // update cache for leader
-            // cache.insert(&template, template.clone());
-            // cache.counter.try_write_to_file("counter_logs.txt");
+        //     // update cache for leader
+        //     cache.insert(&template, template.clone());
+        //     cache.counter.try_write_to_file("counter_logs.txt");
         // }
 
         // #[cfg(feature = "cache_compression")]
@@ -138,28 +132,28 @@ pub(crate) mod exp_util {
         //     cache.counter.try_write_to_file("counter_logs.txt");
         // }
 
-        // fn decompress(&mut self, cache: &mut Controller) {
-            // let parts: Vec<&str> = self.sql.split("*|*").collect();
-            // if parts.len() != 3 { 
-            //     panic!("Unexpected query: {:?}", self.sql);
-            // }
+        // fn decode(&mut self, cache: &mut Controller) {
+        //     let parts: Vec<&str> = self.sql.split("*|*").collect();
+        //     if parts.len() != 3 { 
+        //         panic!("Unexpected query: {:?}", self.sql);
+        //     }
 
-            // let (compressed, index_or_template, parameters) = (parts[0], parts[1].to_string(), parts[2].to_string());
-            // let mut template = index_or_template.clone();
+        //     let (compressed, index_or_template, parameters) = (parts[0], parts[1].to_string(), parts[2].to_string());
+        //     let mut template = index_or_template.clone();
 
-            // if compressed == "1" {
-            //     // compressed messsage
-            //     let index = index_or_template.parse::<usize>().unwrap();
-            //     if let Some(cacheitem) = cache.get_index(index) {
-            //         template = cacheitem.value().to_string();
-            //     } else { 
-            //         panic!("Out of index: {}", index);
-            //     }
-            // }
+        //     if compressed == "1" {
+        //         // compressed messsage
+        //         let index = index_or_template.parse::<usize>().unwrap();
+        //         if let Some(cacheitem) = cache.get_index(index) {
+        //             template = cacheitem.value().to_string();
+        //         } else { 
+        //             panic!("Out of index: {}", index);
+        //         }
+        //     }
             
-            // // update cache for followers
-            // cache.insert(&template, template.clone());
-            // self.sql = merge_query(template, parameters);
+        //     // update cache for followers
+        //     cache.insert(&template, template.clone());
+        //     self.sql = merge_query(template, parameters);
         // }
 
 
@@ -185,7 +179,7 @@ pub(crate) mod exp_util {
         //         cache.insert(&para, para.clone());
         //     }
         // }
-    // }
+    }
 
     pub type SnapshotType = ();
     pub type PaxosStorageType = MemoryStorage<StoreCommand, SnapshotType>;

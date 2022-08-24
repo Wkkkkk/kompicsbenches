@@ -19,7 +19,7 @@ use std::{
 };
 use synchronoise::{event::CountdownError, CountdownEvent};
 
-const STOP_TIMEOUT: Duration = Duration::from_secs(30);
+const STOP_TIMEOUT: Duration = Duration::from_secs(60);
 const PROPOSAL_ID_SIZE: usize = 8; // size of u64
 const PAYLOAD: [u8; DATA_SIZE - PROPOSAL_ID_SIZE] = [0; DATA_SIZE - PROPOSAL_ID_SIZE];
 #[derive(Debug, PartialEq)]

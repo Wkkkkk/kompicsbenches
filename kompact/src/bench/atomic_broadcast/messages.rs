@@ -323,7 +323,8 @@ pub mod paxos {
                     let sync_item =
                         Self::deserialise_syncitem(buf).expect("Failed to deserialize SyncItem");
                     let stopsign = None;
-                    let acc_sync = AcceptSync::with(n, sync_item, sync_idx, decide_idx, stopsign);
+                    let cache = None;
+                    let acc_sync = AcceptSync::with(n, sync_item, sync_idx, decide_idx, stopsign, cache);
                     Message::with(from, to, PaxosMsg::AcceptSync(acc_sync))
                 }
                 ACCEPTDECIDE_ID => {

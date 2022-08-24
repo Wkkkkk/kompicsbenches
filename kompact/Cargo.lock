@@ -1255,6 +1255,7 @@ dependencies = [
  "indexmap",
  "kompact",
  "lazy_static",
+ "lecar",
  "memmap",
  "num_cpus",
  "omnipaxos_core",
@@ -1596,9 +1597,7 @@ dependencies = [
 name = "omnipaxos_core"
 version = "0.1.0"
 dependencies = [
- "lazy_static",
  "lecar",
- "regex",
  "serde",
  "serde_json",
 ]
