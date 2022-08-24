@@ -140,7 +140,7 @@ impl AtomicBroadcastMaster {
         let (client_comp, unique_reg_f) = system.create_and_register(|| {
             Client::with(
                 initial_config,
-                self.num_proposals.unwrap(),
+                self.file_path.as_ref().unwrap().clone(),
                 self.concurrent_proposals.unwrap(),
                 self.local_proposal_file.as_ref().unwrap().clone(),
                 nodes_id,
@@ -174,12 +174,12 @@ impl AtomicBroadcastMaster {
                 num_clients, c.number_of_nodes
             )));
         }
-        if c.concurrent_proposals > c.number_of_proposals {
-            return Err(BenchmarkError::InvalidTest(format!(
-                "Concurrent proposals: {} should be less or equal to number of proposals: {}",
-                c.concurrent_proposals, c.number_of_proposals
-            )));
-        }
+        // if c.concurrent_proposals > c.number_of_proposals {
+        //     return Err(BenchmarkError::InvalidTest(format!(
+        //         "Concurrent proposals: {} should be less or equal to number of proposals: {}",
+        //         c.concurrent_proposals, c.number_of_proposals
+        //     )));
+        // }
         match &c.algorithm.to_lowercase() {
             a if a != "paxos"
                 && a != "raft"

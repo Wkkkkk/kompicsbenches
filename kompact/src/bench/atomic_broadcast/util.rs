@@ -169,7 +169,7 @@ pub(crate) mod exp_util {
             c.algorithm,
             c.number_of_nodes,
             c.concurrent_proposals,
-            c.number_of_proposals,
+            c.file_path,
             c.reconfiguration.clone(),
             c.reconfig_policy,
             c.network_scenario,

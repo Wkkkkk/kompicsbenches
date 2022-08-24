@@ -151,7 +151,7 @@ fn read_from_file(path: String, max_size: u64) -> Vec<String> {
 impl<T: LogCommand> Client<T> {
     pub fn with(
         initial_config: Vec<u64>,
-        num_proposals: u64,
+        file_path: String,
         num_concurrent_proposals: u64,
         local_proposal_file: String,
         nodes: HashMap<u64, ActorPath>,
