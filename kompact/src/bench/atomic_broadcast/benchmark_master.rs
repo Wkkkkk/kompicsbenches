@@ -44,6 +44,7 @@ pub struct AtomicBroadcastMaster {
     num_nodes: Option<u64>,
     num_nodes_needed: Option<u64>,
     num_proposals: Option<u64>,
+    local_proposal_file: Option<String>,
     concurrent_proposals: Option<u64>,
     reconfiguration: Option<(ReconfigurationPolicy, Vec<u64>)>,
     network_scenario: Option<NetworkScenario>,
@@ -66,6 +67,7 @@ impl AtomicBroadcastMaster {
             num_nodes: None,
             num_nodes_needed: None,
             num_proposals: None,
+            local_proposal_file: None,
             concurrent_proposals: None,
             reconfiguration: None,
             network_scenario: None,
@@ -140,6 +142,7 @@ impl AtomicBroadcastMaster {
                 initial_config,
                 self.num_proposals.unwrap(),
                 self.concurrent_proposals.unwrap(),
+                self.local_proposal_file.as_ref().unwrap().clone(),
                 nodes_id,
                 network_scenario,
                 reconfig,
@@ -521,7 +524,8 @@ impl DistributedBenchmarkMaster for AtomicBroadcastMaster {
         let experiment_str = create_experiment_str(&c);
         self.num_nodes = Some(c.number_of_nodes);
         self.experiment_str = Some(experiment_str.clone());
-        self.num_proposals = Some(c.number_of_proposals);
+        self.num_proposals = Some(c.number_of_proposals.clone());
+        self.local_proposal_file = Some(c.file_path.clone());
         self.concurrent_proposals = Some(c.concurrent_proposals);
         self.meta_results_sub_dir = Some(create_metaresults_sub_dir(
             c.number_of_nodes,
@@ -656,6 +660,7 @@ impl DistributedBenchmarkMaster for AtomicBroadcastMaster {
             self.reconfiguration = None;
             self.concurrent_proposals = None;
             self.num_proposals = None;
+            self.local_proposal_file = None;
             self.experiment_str = None;
             self.meta_results_sub_dir = None;
             self.num_timed_out.clear();

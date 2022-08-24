@@ -136,13 +136,13 @@ pub struct Client<T: LogCommand> {
     recover_periodic_partition: bool,
 }
 
-fn read_from_file(path: String) -> Vec<String> {
+fn read_from_file(path: String, max_size: u64) -> Vec<String> {
     println!("Reading file: {}", path);
     let file = File::open(path).expect("no such file");
     let reader = BufReader::new(file);
     let all_lines = reader.lines()
                         .map(|l| l.unwrap())
-                        .take(10000)
+                        .take(max_size as usize)
                         .collect::<Vec<_>>();
 
     all_lines
@@ -153,6 +153,7 @@ impl<T: LogCommand> Client<T> {
         initial_config: Vec<u64>,
         num_proposals: u64,
         num_concurrent_proposals: u64,
+        local_proposal_file: String,
         nodes: HashMap<u64, ActorPath>,
         network_scenario: NetworkScenario,
         reconfig: Option<(ReconfigurationPolicy, Vec<u64>)>,
@@ -162,7 +163,7 @@ impl<T: LogCommand> Client<T> {
         finished_latch: Arc<CountdownEvent>,
     ) -> Self {
         let clock = Clock::new();
-        let proposals = read_from_file("/home/kunwu/raw_queries.txt".to_string());
+        let proposals = read_from_file(local_proposal_file, num_proposals);
         let num_proposals = proposals.len() as u64 - 1;
         Self {
             ctx: ComponentContext::uninitialised(),

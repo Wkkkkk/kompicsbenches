@@ -238,6 +238,7 @@ object Benchmarks extends ParameterDescriptionImplicits {
   private val atomicBroadcastTestNodes = List(3);
   private val atomicBroadcastTestProposals = List(10L.k);
   private val atomicBroadcastTestConcurrentProposals = List(200L);
+  private val atomicBroadcastLocalProposals = "/home/kunwu/raw_queries.txt";
 
   private val atomicBroadcastNodes = List(3, 5);
   private val atomicBroadcastProposals = List(5L.mio);
@@ -324,6 +325,7 @@ object Benchmarks extends ParameterDescriptionImplicits {
             reconfiguration = r,
             reconfigPolicy = rp,
             networkScenario = ns,
+            filePath = atomicBroadcastLocalProposals,
           )
       },
     testSpace = atomicBroadcastNormalTestSpace
@@ -337,6 +339,7 @@ object Benchmarks extends ParameterDescriptionImplicits {
             reconfiguration = r,
             reconfigPolicy = rp,
             networkScenario = ns,
+            filePath = atomicBroadcastLocalProposals,
           )
       }
   );

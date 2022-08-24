@@ -65,4 +65,5 @@ message AtomicBroadcastRequest {
 	string reconfiguration = 5;
 	string reconfig_policy = 6;
 	string network_scenario = 7;
+	string file_path = 8;
 }
