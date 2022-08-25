@@ -16,15 +16,17 @@ use std::{
     sync::Arc,
     time::{Duration, SystemTime},
 };
-use synchronoise::{event::CountdownError, CountdownEvent};
+use synchronoise::CountdownEvent;
 
 const STOP_TIMEOUT: Duration = Duration::from_secs(30);
 const PROPOSAL_ID_SIZE: usize = 8; // size of u64
 const PAYLOAD: [u8; DATA_SIZE - PROPOSAL_ID_SIZE] = [0; DATA_SIZE - PROPOSAL_ID_SIZE];
-#[derive(Debug, PartialEq)]
+#[derive(Copy, Clone, Debug, PartialEq)]
 enum ExperimentState {
     Setup,
+    WarmUp,
     Running,
+    PendingReconfiguration, // only reconfiguration left in the experiment
     Finished,
 }
 
@@ -56,7 +58,7 @@ pub struct MetaResults {
     pub num_retried: u64,
     pub latencies: Vec<Duration>,
     pub leader_changes: Vec<(SystemTime, (u64, u64))>,
-    pub windowed_results: Vec<usize>,
+    pub windowed_results: WindowedResult,
     pub reconfig_ts: Option<(SystemTime, SystemTime)>,
     pub timestamps: Vec<Instant>,
 }
@@ -67,7 +69,7 @@ impl MetaResults {
         num_retried: u64,
         latencies: Vec<Duration>,
         leader_changes: Vec<(SystemTime, (u64, u64))>,
-        windowed_results: Vec<usize>,
+        windowed_results: WindowedResult,
         reconfig_ts: Option<(SystemTime, SystemTime)>,
         timestamps: Vec<Instant>,
     ) -> Self {
@@ -83,18 +85,38 @@ impl MetaResults {
     }
 }
 
+#[derive(Debug)]
+pub struct WindowedResult {
+    pub num_warmup_windows: usize,
+    pub windows: Vec<usize>,
+}
+
+impl WindowedResult {
+    fn set_num_warmup_windows(&mut self) {
+        self.num_warmup_windows = self.windows.len();
+    }
+}
+
+impl Default for WindowedResult {
+    fn default() -> Self {
+        Self {
+            num_warmup_windows: 0,
+            windows: vec![],
+        }
+    }
+}
+
 #[derive(ComponentDefinition)]
 pub struct Client {
     ctx: ComponentContext<Self>,
-    num_proposals: u64,
+    exp_duration: Duration,
     num_concurrent_proposals: u64,
     nodes: HashMap<u64, ActorPath>,
     network_scenario: NetworkScenario,
     reconfig: Option<(ReconfigurationPolicy, Vec<u64>)>,
-    leader_election_latch: Arc<CountdownEvent>,
+    warmup_latch: Arc<CountdownEvent>,
     finished_latch: Arc<CountdownEvent>,
     latest_proposal_id: u64,
-    max_proposal_id: u64,
     responses: HashMap<u64, Option<Duration>>,
     pending_proposals: HashMap<u64, ProposalMetaData>,
     timeout: Duration,
@@ -108,7 +130,7 @@ pub struct Client {
     stop_ask: Option<Ask<(), MetaResults>>,
     window_timer: Option<ScheduledTimer>,
     /// timestamp, number of proposals completed
-    windows: Vec<usize>,
+    windowed_result: WindowedResult,
     clock: Clock,
     reconfig_start_ts: Option<SystemTime>,
     reconfig_end_ts: Option<SystemTime>,
@@ -131,29 +153,28 @@ pub struct Client {
 impl Client {
     pub fn with(
         initial_config: Vec<u64>,
-        num_proposals: u64,
+        exp_duration: Duration,
         num_concurrent_proposals: u64,
         nodes: HashMap<u64, ActorPath>,
         network_scenario: NetworkScenario,
         reconfig: Option<(ReconfigurationPolicy, Vec<u64>)>,
         timeout: Duration,
         preloaded_log_size: u64,
-        leader_election_latch: Arc<CountdownEvent>,
+        warmup_latch: Arc<CountdownEvent>,
         finished_latch: Arc<CountdownEvent>,
     ) -> Client {
         let clock = Clock::new();
         Client {
             ctx: ComponentContext::uninitialised(),
-            num_proposals,
+            exp_duration,
             num_concurrent_proposals,
             nodes,
             network_scenario,
             reconfig,
-            leader_election_latch,
+            warmup_latch,
             finished_latch,
             latest_proposal_id: preloaded_log_size,
-            max_proposal_id: num_proposals + preloaded_log_size,
-            responses: HashMap::with_capacity(num_proposals as usize),
+            responses: HashMap::with_capacity(10000),
             pending_proposals: HashMap::with_capacity(num_concurrent_proposals as usize),
             timeout,
             current_leader: 0,
@@ -165,14 +186,14 @@ impl Client {
             leader_changes: vec![],
             stop_ask: None,
             window_timer: None,
-            windows: vec![],
+            windowed_result: WindowedResult::default(),
             clock,
             reconfig_start_ts: None,
             reconfig_end_ts: None,
             #[cfg(feature = "track_timeouts")]
             timeouts: vec![],
             #[cfg(feature = "track_timestamps")]
-            timestamps: HashMap::with_capacity(num_proposals as usize),
+            timestamps: HashMap::with_capacity(exp_duration as usize),
             #[cfg(feature = "track_timeouts")]
             late_responses: vec![],
             #[cfg(feature = "preloaded_log")]
@@ -222,15 +243,7 @@ impl Client {
         }
         let available_n = self.num_concurrent_proposals - num_inflight;
         let from = self.latest_proposal_id + 1;
-        let i = self.latest_proposal_id + available_n;
-        let to = if i > self.max_proposal_id {
-            self.max_proposal_id
-        } else {
-            i
-        };
-        if from > to {
-            return;
-        }
+        let to = self.latest_proposal_id + available_n;
         let cache_start_time =
             self.num_concurrent_proposals == 1 || cfg!(feature = "track_latency");
         for id in from..=to {
@@ -253,66 +266,6 @@ impl Client {
             self.timestamps.insert(id, timestamp);
         }
         self.responses.insert(id, latency_res);
-        let received_count = self.responses.len() as u64;
-        if received_count == self.num_proposals {
-            if self.reconfig.is_none() {
-                if let Some(timer) = self.window_timer.take() {
-                    self.cancel_timer(timer);
-                }
-                if let Some(timer) = self.periodic_partition_timer.take() {
-                    self.cancel_timer(timer);
-                }
-                self.state = ExperimentState::Finished;
-                self.finished_latch
-                    .decrement()
-                    .expect("Failed to countdown finished latch");
-                let leader_changes: Vec<_> =
-                    self.leader_changes.iter().map(|(_ts, lc)| lc).collect();
-                if self.num_timed_out > 0 || self.num_retried > 0 {
-                    info!(self.ctx.log(), "Got all responses with {} timeouts and {} retries. Number of leader changes: {}, {:?}, Last leader was: {}, ballot/term: {}.", self.num_timed_out, self.num_retried, self.leader_changes.len(), leader_changes, self.current_leader, self.leader_round);
-                    #[cfg(feature = "track_timeouts")]
-                    {
-                        let min = self.timeouts.iter().min();
-                        let max = self.timeouts.iter().max();
-                        let late_min = self.late_responses.iter().min();
-                        let late_max = self.late_responses.iter().max();
-                        info!(
-                                self.ctx.log(),
-                                "Timed out: Min: {:?}, Max: {:?}. Late responses: {}, min: {:?}, max: {:?}",
-                                min,
-                                max,
-                                self.late_responses.len(),
-                                late_min,
-                                late_max
-                            );
-                    }
-                } else {
-                    info!(
-                        self.ctx.log(),
-                        "Got all responses. Number of leader changes: {}, {:?}, Last leader was: {}, ballot/term: {}.",
-                        self.leader_changes.len(),
-                        leader_changes,
-                        self.current_leader,
-                        self.leader_round
-                    );
-                }
-            } else {
-                warn!(
-                    self.ctx.log(),
-                    "Got all normal responses but still pending reconfiguration"
-                );
-            }
-        } else if received_count == self.num_proposals / 2 && self.reconfig.is_some() {
-            let leader = self
-                .nodes
-                .get(&self.current_leader)
-                .expect("No leader to propose reconfiguration to!");
-            self.propose_reconfiguration(&leader);
-            self.reconfig_start_ts = Some(SystemTime::now());
-            let timer = self.schedule_once(self.timeout, move |c, _| c.reconfig_timeout());
-            let proposal_meta = ProposalMetaData::with(None, timer);
-            self.pending_proposals.insert(RECONFIG_ID, proposal_meta);
-        }
     }
 
     fn handle_reconfig_response(&mut self, rr: ReconfigurationResp) {
@@ -320,32 +273,39 @@ impl Client {
             self.reconfig_end_ts = Some(SystemTime::now());
             let new_config = rr.current_configuration;
             self.cancel_timer(proposal_meta.timer);
-            if self.responses.len() as u64 == self.num_proposals {
-                self.state = ExperimentState::Finished;
-                self.finished_latch
-                    .decrement()
-                    .expect("Failed to countdown finished latch");
-                info!(self.ctx.log(), "Got reconfig at last. {} proposals timed out. Leader changes: {}, {:?}, Last leader was: {}, ballot/term: {}", self.num_timed_out, self.leader_changes.len(), self.leader_changes, self.current_leader, self.leader_round);
-            } else {
-                self.reconfig = None;
-                self.current_config = new_config;
-                info!(
-                    self.ctx.log(),
-                    "Reconfig OK, leader: {}, old: {}, current_config: {:?}",
-                    rr.latest_leader,
-                    self.current_leader,
-                    self.current_config
-                );
-                if rr.latest_leader > 0
-                    && self.current_leader != rr.latest_leader
-                    && rr.leader_round > self.leader_round
-                {
-                    self.current_leader = rr.latest_leader;
-                    self.leader_round = rr.leader_round;
-                    self.leader_changes
-                        .push((SystemTime::now(), (self.current_leader, self.leader_round)));
+            match self.state {
+                ExperimentState::PendingReconfiguration => {
+                    self.finished_latch
+                        .decrement()
+                        .expect("Failed to countdown finished latch");
+                    info!(self.ctx.log(), "Got reconfig at last. {} proposals timed out. Leader changes: {}, {:?}, Last leader was: {}, ballot/term: {}", self.num_timed_out, self.leader_changes.len(), self.leader_changes, self.current_leader, self.leader_round);
+                    self.state = ExperimentState::Finished;
                 }
-                self.send_concurrent_proposals();
+                ExperimentState::Running => {
+                    self.reconfig = None;
+                    self.current_config = new_config;
+                    info!(
+                        self.ctx.log(),
+                        "Reconfig OK, leader: {}, old: {}, current_config: {:?}",
+                        rr.latest_leader,
+                        self.current_leader,
+                        self.current_config
+                    );
+                    if rr.latest_leader > 0
+                        && self.current_leader != rr.latest_leader
+                        && rr.leader_round > self.leader_round
+                    {
+                        self.current_leader = rr.latest_leader;
+                        self.leader_round = rr.leader_round;
+                        self.leader_changes
+                            .push((SystemTime::now(), (self.current_leader, self.leader_round)));
+                    }
+                    self.send_concurrent_proposals();
+                }
+                e => unreachable!(
+                    "Unexpected experiment state when getting reconfig response: {:?}",
+                    e
+                ),
             }
         }
     }
@@ -377,6 +337,61 @@ impl Client {
             .get_mut(&RECONFIG_ID)
             .expect("Could not find MetaData for Reconfiguration in pending_proposals");
         proposal_meta.set_timer(timer);
+        Handled::Ok
+    }
+
+    fn experiment_timeout(&mut self) -> Handled {
+        if self.reconfig.is_none() {
+            self.finished_latch
+                .decrement()
+                .expect("Failed to countdown finished latch");
+
+            if let Some(timer) = self.window_timer.take() {
+                self.cancel_timer(timer);
+            }
+            #[cfg(feature = "simulate_partition")]
+            {
+                if let Some(timer) = self.periodic_partition_timer.take() {
+                    self.cancel_timer(timer);
+                }
+            }
+            self.state = ExperimentState::Finished;
+            let leader_changes: Vec<_> = self.leader_changes.iter().map(|(_ts, lc)| lc).collect();
+            if self.num_timed_out > 0 || self.num_retried > 0 {
+                info!(self.ctx.log(), "Got all responses with {} timeouts and {} retries. Number of leader changes: {}, {:?}, Last leader was: {}, ballot/term: {}.", self.num_timed_out, self.num_retried, self.leader_changes.len(), leader_changes, self.current_leader, self.leader_round);
+                #[cfg(feature = "track_timeouts")]
+                {
+                    let min = self.timeouts.iter().min();
+                    let max = self.timeouts.iter().max();
+                    let late_min = self.late_responses.iter().min();
+                    let late_max = self.late_responses.iter().max();
+                    info!(
+                        self.ctx.log(),
+                        "Timed out: Min: {:?}, Max: {:?}. Late responses: {}, min: {:?}, max: {:?}",
+                        min,
+                        max,
+                        self.late_responses.len(),
+                        late_min,
+                        late_max
+                    );
+                }
+            } else {
+                info!(
+                        self.ctx.log(),
+                        "Got all responses. Number of leader changes: {}, {:?}, Last leader was: {}, ballot/term: {}.",
+                        self.leader_changes.len(),
+                        leader_changes,
+                        self.current_leader,
+                        self.leader_round
+                    );
+            }
+        } else {
+            self.state = ExperimentState::PendingReconfiguration;
+            warn!(
+                self.ctx.log(),
+                "Got all normal responses but still pending reconfiguration"
+            );
+        }
         Handled::Ok
     }
 
@@ -412,7 +427,7 @@ impl Client {
                 self.num_retried as u64,
                 latencies,
                 std::mem::take(&mut self.leader_changes),
-                std::mem::take(&mut self.windows),
+                std::mem::take(&mut self.windowed_result),
                 reconfig_ts,
                 vec![],
             );
@@ -446,7 +461,7 @@ impl Client {
             .copied()
             .collect();
         match self.network_scenario {
-            NetworkScenario::QuorumLoss => {
+            NetworkScenario::QuorumLoss(duration) => {
                 assert!(self.nodes.len() >= 5);
                 let fully_connected_node = *followers.first().unwrap(); // first follower to be partitioned from the leader
                 let rest: Vec<u64> = self
@@ -471,8 +486,9 @@ impl Client {
                     )
                     .expect("Should serialise");
                 }
+                self.schedule_partition_recovery(duration);
             }
-            NetworkScenario::ConstrainedElection => {
+            NetworkScenario::ConstrainedElection(duration) => {
                 assert!(self.nodes.len() >= 5);
                 let lagging_follower = *followers.first().unwrap(); // first follower to be partitioned from the leader
                 info!(self.ctx.log(), "Creating partition {:?}. leader: {}, term: {}, lagging follower connected to majority: {}, num_responses: {}", self.network_scenario, self.current_leader, self.leader_round, lagging_follower, self.responses.len());
@@ -509,8 +525,9 @@ impl Client {
                         self,
                     )
                     .expect("Should serialise");
+                self.schedule_partition_recovery(duration);
             }
-            NetworkScenario::Chained => {
+            NetworkScenario::Chained(duration) => {
                 // Chained scenario
                 let disconnected_follower = followers.first().unwrap();
                 let ap = self.nodes.get(disconnected_follower).unwrap();
@@ -533,24 +550,18 @@ impl Client {
                     disconnected_follower,
                     self.responses.len()
                 );
+                self.schedule_partition_recovery(duration);
             }
-            NetworkScenario::PeriodicFull => {
+            NetworkScenario::PeriodicFull(duration) => {
                 // Periodic full scenario
                 let disconnected_follower = *followers.first().unwrap();
-                let intermediate_duration = self.ctx.config()["partition_experiment"]
-                    ["intermediate_duration"]
-                    .as_duration()
-                    .expect("No intermediate duration!");
-                let timer = self.schedule_periodic(
-                    Duration::from_millis(0),
-                    intermediate_duration,
-                    move |c, _| {
+                let timer =
+                    self.schedule_periodic(Duration::from_millis(0), duration, move |c, _| {
                         if c.periodic_partition_timer.is_some() {
                             c.periodic_partition(disconnected_follower);
                         }
                         Handled::Ok
-                    },
-                );
+                    });
                 self.periodic_partition_timer = Some(timer);
                 return; // end of periodic partition
             }
@@ -558,10 +569,11 @@ impl Client {
                 return;
             }
         }
-        let partition_duration = self.ctx.config()["partition_experiment"]["partition_duration"]
-            .as_duration()
-            .expect("No partition duration!");
-        self.schedule_once(partition_duration, move |c, _| {
+    }
+
+    #[cfg(feature = "simulate_partition")]
+    fn schedule_partition_recovery(&mut self, d: Duration) {
+        self.schedule_once(d, move |c, _| {
             if let Some(timer) = c.periodic_partition_timer.take() {
                 c.cancel_timer(timer);
             }
@@ -620,7 +632,10 @@ impl Actor for Client {
         match msg {
             LocalClientMessage::Run => {
                 self.state = ExperimentState::Running;
+                self.windowed_result.set_num_warmup_windows();
                 assert_ne!(self.current_leader, 0);
+                #[cfg(feature = "simulate_partition")]
+                self.create_partition();
                 #[cfg(feature = "track_timestamps")]
                 {
                     self.leader_changes
@@ -639,20 +654,18 @@ impl Actor for Client {
                         Handled::Ok
                     });
                 }
-                let timer =
-                    self.schedule_periodic(WINDOW_DURATION, WINDOW_DURATION, move |c, _| {
-                        c.windows.push(c.responses.len());
-                        Handled::Ok
-                    });
-                self.window_timer = Some(timer);
-                self.send_concurrent_proposals();
-                #[cfg(feature = "simulate_partition")]
-                {
-                    let partition_ts = self.ctx.config()["partition_experiment"]["partition_ts"]
-                        .as_duration()
-                        .expect("No partition ts!");
-                    self.schedule_once(partition_ts, move |c, _| {
-                        c.create_partition();
+                let _ = self.schedule_once(self.exp_duration, move |c, _| c.experiment_timeout());
+                if self.reconfig.is_some() {
+                    self.schedule_once(self.exp_duration / 2, move |c, _| {
+                        let leader = c
+                            .nodes
+                            .get(&c.current_leader)
+                            .expect("No leader to propose reconfiguration to!");
+                        c.propose_reconfiguration(&leader);
+                        c.reconfig_start_ts = Some(SystemTime::now());
+                        let timer = c.schedule_once(c.timeout, move |c, _| c.reconfig_timeout());
+                        let proposal_meta = ProposalMetaData::with(None, timer);
+                        c.pending_proposals.insert(RECONFIG_ID, proposal_meta);
                         Handled::Ok
                     });
                 }
@@ -686,15 +699,22 @@ impl Actor for Client {
                         if cfg!(feature = "preloaded_log") {
                             return Handled::Ok; // wait until all preloaded responses before decrementing leader latch
                         } else {
-                            match self.leader_election_latch.decrement() {
-                                Ok(_) => info!(self.ctx.log(), "Got first leader: {}, ballot/term: {}. Current config: {:?}. Payload size: {:?}", pid, self.leader_round, self.current_config, DATA_SIZE),
-                                Err(e) => if e != CountdownError::AlreadySet {
-                                    panic!("Failed to decrement election latch: {:?}", e);
-                                }
-                            }
+                            self.state = ExperimentState::WarmUp;
+                            self.send_concurrent_proposals();
+                            self.schedule_once(WARMUP_DURATION, move |c, _| {
+                                c.warmup_latch.decrement().expect("Failed to decrement warmup latch");
+                                Handled::Ok
+                            });
+                            let timer =
+                                self.schedule_periodic(WINDOW_DURATION, WINDOW_DURATION, move |c, _| {
+                                    c.windowed_result.windows.push(c.responses.len());
+                                    Handled::Ok
+                                });
+                            self.window_timer = Some(timer);
+                            info!(self.ctx.log(), "Got first leader: {}, ballot/term: {}. Current config: {:?}. Payload size: {:?}", pid, self.leader_round, self.current_config, DATA_SIZE);
                         }
                     }
-                    AtomicBroadcastMsg::Leader(pid, round) if self.state == ExperimentState::Running && round > self.leader_round => {
+                    AtomicBroadcastMsg::Leader(pid, round) if (self.state == ExperimentState::Running || self.state == ExperimentState::WarmUp) && round > self.leader_round => {
                         self.leader_round = round;
                         if self.current_leader != pid {
                             self.current_leader = pid;
@@ -721,7 +741,10 @@ impl Actor for Client {
                                 }
                             }
                             self.handle_normal_response(id, latency);
-                            self.send_concurrent_proposals();
+                            match self.state {
+                                ExperimentState::Running | ExperimentState::WarmUp => self.send_concurrent_proposals(),
+                                _ => {},
+                            }
                         } else {
                             #[cfg(feature = "preloaded_log")] {
                                 if id <= self.num_preloaded_proposals && self.state == ExperimentState::Setup {
@@ -729,7 +752,7 @@ impl Actor for Client {
                                     self.leader_round = pr.leader_round;
                                     self.rem_preloaded_proposals -= 1;
                                     if self.rem_preloaded_proposals == 0 {
-                                        match self.leader_election_latch.decrement() {
+                                        match self.warmup_latch.decrement() {
                                             Ok(_) => info!(self.ctx.log(), "Got all preloaded responses. Decrementing leader latch. leader: {}. Current config: {:?}. Payload size: {:?}", self.current_leader, self.current_config, DATA_SIZE),
                                             Err(e) => if e != CountdownError::AlreadySet {
                                                 panic!("Failed to decrement election latch: {:?}", e);

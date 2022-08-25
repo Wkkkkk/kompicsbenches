@@ -1,7 +1,7 @@
 use crate::{
     bench::atomic_broadcast::{
         benchmark_client::ClientParams,
-        client::{Client, LocalClientMessage, MetaResults},
+        client::{Client, LocalClientMessage, MetaResults, WindowedResult},
         util::exp_util::*,
     },
     partitioning_actor::{IterationControlMsg, PartitioningActor},
@@ -34,16 +34,16 @@ pub enum ReconfigurationPolicy {
 #[derive(Copy, Clone, Debug)]
 pub enum NetworkScenario {
     FullyConnected,
-    QuorumLoss,
-    ConstrainedElection,
-    Chained,
-    PeriodicFull,
+    QuorumLoss(Duration),
+    ConstrainedElection(Duration),
+    Chained(Duration),
+    PeriodicFull(Duration),
 }
 
 pub struct AtomicBroadcastMaster {
     num_nodes: Option<u64>,
     num_nodes_needed: Option<u64>,
-    num_proposals: Option<u64>,
+    exp_duration: Option<Duration>,
     concurrent_proposals: Option<u64>,
     reconfiguration: Option<(ReconfigurationPolicy, Vec<u64>)>,
     network_scenario: Option<NetworkScenario>,
@@ -65,7 +65,7 @@ impl AtomicBroadcastMaster {
         AtomicBroadcastMaster {
             num_nodes: None,
             num_nodes_needed: None,
-            num_proposals: None,
+            exp_duration: None,
             concurrent_proposals: None,
             reconfiguration: None,
             network_scenario: None,
@@ -128,7 +128,7 @@ impl AtomicBroadcastMaster {
         network_scenario: NetworkScenario,
         client_timeout: Duration,
         preloaded_log_size: u64,
-        leader_election_latch: Arc<CountdownEvent>,
+        warmup_latch: Arc<CountdownEvent>,
     ) -> (Arc<Component<Client>>, ActorPath) {
         let system = self.system.as_ref().unwrap();
         let finished_latch = self.finished_latch.clone().unwrap();
@@ -138,14 +138,14 @@ impl AtomicBroadcastMaster {
         let (client_comp, unique_reg_f) = system.create_and_register(|| {
             Client::with(
                 initial_config,
-                self.num_proposals.unwrap(),
+                self.exp_duration.unwrap(),
                 self.concurrent_proposals.unwrap(),
                 nodes_id,
                 network_scenario,
                 reconfig,
                 client_timeout,
                 preloaded_log_size,
-                leader_election_latch,
+                warmup_latch,
                 finished_latch,
             )
         });
@@ -169,12 +169,6 @@ impl AtomicBroadcastMaster {
             return Err(BenchmarkError::InvalidTest(format!(
                 "Not enough clients: {}, Required: {}",
                 num_clients, c.number_of_nodes
-            )));
-        }
-        if c.concurrent_proposals > c.number_of_proposals {
-            return Err(BenchmarkError::InvalidTest(format!(
-                "Concurrent proposals: {} should be less or equal to number of proposals: {}",
-                c.concurrent_proposals, c.number_of_proposals
             )));
         }
         match &c.algorithm.to_lowercase() {
@@ -238,19 +232,44 @@ impl AtomicBroadcastMaster {
                 )));
             }
         }
-        let network_scenario = match c.network_scenario.to_lowercase().as_str() {
-            "fully_connected" => NetworkScenario::FullyConnected,
-            "quorum_loss" if c.number_of_nodes >= 5 => NetworkScenario::QuorumLoss,
-            "constrained_election" if c.number_of_nodes >= 5 => {
-                NetworkScenario::ConstrainedElection
-            }
-            "chained" if c.number_of_nodes == 3 => NetworkScenario::Chained,
-            "periodic_full" => NetworkScenario::PeriodicFull,
-            _ => {
-                return Err(BenchmarkError::InvalidTest(format!(
-                    "Unimplemented network scenario for {} nodes: {}",
-                    c.number_of_nodes, &c.network_scenario
-                )));
+        let str = c.network_scenario.to_lowercase();
+        let network_scenario = {
+            if str.as_str() == "fully_connected" {
+                NetworkScenario::FullyConnected
+            } else {
+                let split: Vec<_> = str.split('-').collect();
+                if split.len() != 2 {
+                    return Err(BenchmarkError::InvalidTest(format!(
+                        "Unimplemented network scenario for {} nodes: {}",
+                        c.number_of_nodes, &c.network_scenario
+                    )));
+                }
+                let duration = match split[1].parse::<u64>() {
+                    Ok(d) => Duration::from_secs(d),
+                    _ => {
+                        return Err(BenchmarkError::InvalidTest(format!(
+                            "Invalid duration for network scenario {}",
+                            &c.network_scenario
+                        )));
+                    }
+                };
+                let network_scenario = match split[0] {
+                    "quorum_loss" if c.number_of_nodes >= 5 => {
+                        NetworkScenario::QuorumLoss(duration)
+                    }
+                    "constrained_election" if c.number_of_nodes >= 5 => {
+                        NetworkScenario::ConstrainedElection(duration)
+                    }
+                    "chained" if c.number_of_nodes == 3 => NetworkScenario::Chained(duration),
+                    "periodic_full" => NetworkScenario::PeriodicFull(duration),
+                    _ => {
+                        return Err(BenchmarkError::InvalidTest(format!(
+                            "Unimplemented network scenario for {} nodes: {}",
+                            c.number_of_nodes, &c.network_scenario
+                        )));
+                    }
+                };
+                network_scenario
             }
         };
         self.network_scenario = Some(network_scenario);
@@ -357,7 +376,7 @@ impl AtomicBroadcastMaster {
             .expect("Failed to flush raw timestamps file");
     }
 
-    fn persist_windowed_results(&mut self, windowed_res: Vec<usize>) {
+    fn persist_windowed_results(&mut self, windowed_res: WindowedResult) {
         let windowed_dir = self.get_meta_results_dir(Some("windowed"));
         create_dir_all(&windowed_dir)
             .unwrap_or_else(|_| panic!("Failed to create given directory: {}", &windowed_dir));
@@ -370,12 +389,13 @@ impl AtomicBroadcastMaster {
                 self.experiment_str.as_ref().unwrap()
             ))
             .expect("Failed to open windowed file");
+        writeln!(windowed_file, "{} ", windowed_res.num_warmup_windows)
+            .expect("Failed to write number of warmup windows");
         let mut prev_n = 0;
-        for n in windowed_res {
+        for n in windowed_res.windows {
             write!(windowed_file, "{},", n - prev_n).expect("Failed to write windowed file");
             prev_n = n;
         }
-        writeln!(windowed_file).expect("Failed to write windowed file");
         windowed_file
             .flush()
             .expect("Failed to flush windowed file");
@@ -521,7 +541,7 @@ impl DistributedBenchmarkMaster for AtomicBroadcastMaster {
         let experiment_str = create_experiment_str(&c);
         self.num_nodes = Some(c.number_of_nodes);
         self.experiment_str = Some(experiment_str.clone());
-        self.num_proposals = Some(c.number_of_proposals);
+        self.exp_duration = Some(Duration::from_secs(c.duration_secs));
         self.concurrent_proposals = Some(c.concurrent_proposals);
         self.meta_results_sub_dir = Some(create_metaresults_sub_dir(
             c.number_of_nodes,
@@ -579,19 +599,19 @@ impl DistributedBenchmarkMaster for AtomicBroadcastMaster {
                 }
             }
         }
-        let leader_election_latch = Arc::new(CountdownEvent::new(1));
+        let warmup_latch = Arc::new(CountdownEvent::new(1));
         let (client_comp, client_path) = self.create_client(
             nodes_id,
             self.network_scenario.expect("No network scenario"),
             client_timeout,
             preloaded_log_size,
-            leader_election_latch.clone(),
+            warmup_latch.clone(),
         );
         let partitioning_actor = self.initialise_iteration(nodes, client_path, pid_map);
         partitioning_actor
             .actor_ref()
             .tell(IterationControlMsg::Run);
-        leader_election_latch.wait(); // wait until leader is established
+        warmup_latch.wait(); // wait until leader is elected and warmup is completed
         self.partitioning_actor = Some(partitioning_actor);
         self.client_comp = Some(client_comp);
     }
@@ -615,6 +635,7 @@ impl DistributedBenchmarkMaster for AtomicBroadcastMaster {
         );
         let system = self.system.take().unwrap();
         let client = self.client_comp.take().unwrap();
+        std::thread::sleep(COOLDOWN_DURATION);
         let meta_results: MetaResults = client
             .actor_ref()
             .ask_with(|promise| LocalClientMessage::Stop(Ask::new(promise, ())))
@@ -655,7 +676,7 @@ impl DistributedBenchmarkMaster for AtomicBroadcastMaster {
             self.num_nodes_needed = None;
             self.reconfiguration = None;
             self.concurrent_proposals = None;
-            self.num_proposals = None;
+            self.exp_duration = None;
             self.experiment_str = None;
             self.meta_results_sub_dir = None;
             self.num_timed_out.clear();

@@ -13,6 +13,8 @@ pub(crate) mod exp_util {
 
     pub const WINDOW_DURATION: Duration = Duration::from_millis(5000);
     pub const DATA_SIZE: usize = 8;
+    pub const WARMUP_DURATION: Duration = Duration::from_secs(20);
+    pub const COOLDOWN_DURATION: Duration = WARMUP_DURATION;
 
     pub struct ExperimentParams {
         pub election_timeout: u64,
@@ -114,7 +116,7 @@ pub(crate) mod exp_util {
             c.algorithm,
             c.number_of_nodes,
             c.concurrent_proposals,
-            c.number_of_proposals,
+            format!("{}min", c.duration_secs / 60), // TODO
             c.reconfiguration.clone(),
             c.reconfig_policy,
             c.network_scenario,
