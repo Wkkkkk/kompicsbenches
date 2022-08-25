@@ -410,6 +410,8 @@ where
                 (LeaderElectionComp::VR(vr), vr_f, vr_alias_f)
             }
             LeaderElection::MultiPaxos => {
+                todo!();
+                /*
                 let (mp_le, mp_f) = system.create_and_register(|| {
                     MultiPaxosLeaderComp::with(
                         ble_peers,
@@ -421,10 +423,14 @@ where
                         initial_election_factor,
                     )
                 });
+
+
                 let mp_le_alias_f = system.register_by_alias(&mp_le, ble_alias);
                 biconnect_components::<BallotLeaderElection, _, _>(&mp_le, &paxos)
                     .expect("Could not connect BLE and PaxosComp!");
                 (LeaderElectionComp::MultiPaxos(mp_le), mp_f, mp_le_alias_f)
+
+                 */
             }
         };
         let communicator_alias = format!(

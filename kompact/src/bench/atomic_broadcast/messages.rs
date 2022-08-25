@@ -790,71 +790,36 @@ pub mod paxos {
 
     pub mod mp_leader_election {
         use super::super::*;
-        use crate::bench::atomic_broadcast::ble::Ballot;
 
         #[derive(Clone, Debug)]
-        pub enum HeartbeatMsg {
-            Request(HeartbeatRequest),
-            Reply(HeartbeatReply),
+        pub struct Ping {
+            pub round: u64,
+            pub leader_index: u64,
         }
 
-        #[derive(Clone, Debug)]
-        pub struct HeartbeatRequest {
-            pub round: u32,
-        }
-
-        impl HeartbeatRequest {
-            pub fn with(round: u32) -> HeartbeatRequest {
-                HeartbeatRequest { round }
-            }
-        }
-
-        #[derive(Clone, Debug)]
-        pub struct HeartbeatReply {
-            pub round: u32,
-            pub ballot: Ballot,
-            pub current_leader: Ballot,
-        }
-
-        impl HeartbeatReply {
-            pub fn with(round: u32, ballot: Ballot, current_leader: Ballot) -> HeartbeatReply {
-                HeartbeatReply {
+        impl Ping {
+            pub fn with(round: u64, leader_index: u64) -> Ping {
+                Ping {
                     round,
-                    ballot,
-                    current_leader,
+                    leader_index,
                 }
             }
         }
 
         pub struct MPLeaderSer;
 
-        const HB_REQ_ID: u8 = 1;
-        const HB_REP_ID: u8 = 2;
-
-        impl Serialisable for HeartbeatMsg {
+        impl Serialisable for Ping {
             fn ser_id(&self) -> u64 {
                 serialiser_ids::MP_ID
             }
 
             fn size_hint(&self) -> Option<usize> {
-                Some(55)
+                None
             }
 
             fn serialise(&self, buf: &mut dyn BufMut) -> Result<(), SerError> {
-                match self {
-                    HeartbeatMsg::Request(req) => {
-                        buf.put_u8(HB_REQ_ID);
-                        buf.put_u32(req.round);
-                    }
-                    HeartbeatMsg::Reply(rep) => {
-                        buf.put_u8(HB_REP_ID);
-                        buf.put_u32(rep.round);
-                        buf.put_u32(rep.ballot.n);
-                        buf.put_u64(rep.ballot.pid);
-                        buf.put_u32(rep.current_leader.n);
-                        buf.put_u64(rep.current_leader.pid);
-                    }
-                }
+                buf.put_u64(self.round);
+                buf.put_u64(self.leader_index);
                 Ok(())
             }
 
@@ -863,31 +828,16 @@ pub mod paxos {
             }
         }
 
-        impl Deserialiser<HeartbeatMsg> for MPLeaderSer {
+        impl Deserialiser<Ping> for MPLeaderSer {
             const SER_ID: u64 = serialiser_ids::MP_ID;
 
-            fn deserialise(buf: &mut dyn Buf) -> Result<HeartbeatMsg, SerError> {
-                match buf.get_u8() {
-                    HB_REQ_ID => {
-                        let round = buf.get_u32();
-                        let hb_req = HeartbeatRequest::with(round);
-                        Ok(HeartbeatMsg::Request(hb_req))
-                    }
-                    HB_REP_ID => {
-                        let round = buf.get_u32();
-                        let n = buf.get_u32();
-                        let pid = buf.get_u64();
-                        let ballot = Ballot::with(n, pid);
-                        let n = buf.get_u32();
-                        let pid = buf.get_u64();
-                        let current_leader = Ballot::with(n, pid);
-                        let hb_rep = HeartbeatReply::with(round, ballot, current_leader);
-                        Ok(HeartbeatMsg::Reply(hb_rep))
-                    }
-                    _ => Err(SerError::InvalidType(
-                        "Found unkown id but expected HeartbeatMessage".into(),
-                    )),
-                }
+            fn deserialise(buf: &mut dyn Buf) -> Result<Ping, SerError> {
+                let round = buf.get_u64();
+                let leader_index = buf.get_u64();
+                Ok(Ping {
+                    round,
+                    leader_index,
+                })
             }
         }
     }
