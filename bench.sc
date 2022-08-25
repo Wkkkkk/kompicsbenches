@@ -16,14 +16,15 @@ import $ivy.`com.decodified::scala-ssh:0.9.0`, com.decodified.scalassh.{SSH, Hos
 //import $ivy.`ch.qos.logback:logback-classic:1.1.7`
 
 val runnerAddr = "10.128.0.4:45678";
-//val masterAddr = "192.168.0.106:45679";
 val masterAddr = "10.128.0.4:45679";
+val localRunnerAddr = "127.0.0.1:45678";
+val localMasterAddr = "127.0.0.1:45679";
 
-def getExperimentRunner(prefix: String, results: Path, testing: Boolean, benchmarks: Seq[String]): BenchmarkRunner = {
+def getExperimentRunner(prefix: String, results: Path, testing: Boolean, benchmarks: Seq[String], addr: String): BenchmarkRunner = {
 	var params: Seq[Shellable] = Seq(
 		"-jar",
 		"target/scala-2.12/Benchmark Suite Runner-assembly-0.3.0-SNAPSHOT.jar",
-		"--server", runnerAddr,
+		"--server", addr,
 		"--prefix", prefix,
 		"--output-folder", results.toString);
 	if (testing) {
@@ -93,7 +94,7 @@ def remote(withNodes: Path = defaultNodesFile, testing: Boolean = false, impls: 
 	val nRunners = masters.size;
 	var errors = 0;
 	masters.zipWithIndex.foreach { case (master, i) =>
-		val experimentRunner = getExperimentRunner(master.symbol, resultsdir, testing, benchmarks);
+		val experimentRunner = getExperimentRunner(master.symbol, resultsdir, testing, benchmarks, runnerAddr);
 		println(s"Starting run [${i+1}/$nRunners]: ${master.label}");
 		val start = System.currentTimeMillis();
 		val r = remoteExperiment(experimentRunner, master, runId, logdir, nodes);
@@ -145,7 +146,7 @@ def fakeRemote(withClients: Int = 1, testing: Boolean = false, impls: Seq[String
 		println("done.");
 		NodeEntry(ip, p, dir.toString)
 	} toList;
-	val masters = masterBenches.map(_.remoteRunner(runnerAddr, masterAddr, nodes.size));
+	val masters = masterBenches.map(_.remoteRunner(localRunnerAddr, localMasterAddr, nodes.size));
 	val logdir = logs / runId;
 	mkdir! logdir;
 	val resultsdir = results / runId;
@@ -156,7 +157,7 @@ def fakeRemote(withClients: Int = 1, testing: Boolean = false, impls: Seq[String
 	val nRunners = masters.size;
 	var errors = 0;
 	masters.zipWithIndex.foreach { case (master, i) =>
-		val experimentRunner = getExperimentRunner(master.symbol, resultsdir, testing, benchmarks);
+		val experimentRunner = getExperimentRunner(master.symbol, resultsdir, testing, benchmarks, localRunnerAddr);
 		println(s"Starting run [${i+1}/$nRunners]: ${master.label}");
 		val start = System.currentTimeMillis();
 		val r = fakeRemoteExperiment(experimentRunner, master, runId, logdir, nodes);
@@ -186,7 +187,7 @@ def fakeRemote(withClients: Int = 1, testing: Boolean = false, impls: Seq[String
 @arg(doc ="Run local benchmarks only.")
 @main
 def local(testing: Boolean = false, impls: Seq[String] = Seq.empty, benchmarks: Seq[String] = Seq.empty, runName: String = ""): Unit = {
-	val runners = runnersForImpl(impls, _.localRunner(runnerAddr));
+	val runners = runnersForImpl(impls, _.localRunner(localRunnerAddr));
 	val totalStart = System.currentTimeMillis();
 	val runId = if (runName.isEmpty) s"run-${totalStart}" else runName;
 	val logdir = logs / runId;
@@ -200,7 +201,7 @@ def local(testing: Boolean = false, impls: Seq[String] = Seq.empty, benchmarks: 
 	var errors = 0;
 	runners.zipWithIndex.foreach { case (r, i) =>
 		try {
-			val experimentRunner = getExperimentRunner(r.symbol, resultsdir, testing, benchmarks);
+			val experimentRunner = getExperimentRunner(r.symbol, resultsdir, testing, benchmarks, localRunnerAddr);
 			println(s"Starting run [${i+1}/$nRunners]: ${r.label}");
 			val start = System.currentTimeMillis();
 			val runner = r.run(logdir);
@@ -284,7 +285,7 @@ private def fakeRemoteExperiment(experimentRunner: BenchmarkRunner, master: Benc
 	Try {
 		val runner = master.run(logDir);
 		val pids = nodes.map { node =>
-			val pid = startFakeClient(node, master.symbol, runId, masterAddr);
+			val pid = startFakeClient(node, master.symbol, runId, localMasterAddr);
 			(node -> pid)
 		};
 		println(s"Got pids: $pids");
