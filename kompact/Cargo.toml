@@ -57,5 +57,7 @@ use_pid_map = [] # assign nodes to specific process ids
 periodic_client_logging = []
 periodic_replica_logging = []
 simulate_partition = [] # simulate livelock and deadlock scenarios
+enable_cache_compression = []
+track_cache_overhead = []
 
 default = []

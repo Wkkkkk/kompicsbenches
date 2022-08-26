@@ -66,37 +66,52 @@ pub(crate) mod exp_util {
     }
 
     impl Entry for StoreCommand {
-        // fn encode(&mut self, cache: &mut Controller) {
-        //     let now = Instant::now();
-        //     let (template, parameters) = split_query(&self.sql);
-        //     let len_tuple = cache.len();
-        //     cache.counter.size = (len_tuple.0 + len_tuple.1 + len_tuple.2) as u64;
-        //     cache.counter.num_queries += 1;
-        //     cache.counter.raw_messsages_size += self.sql.len() as u64;
 
-        //     if let Some(index) = cache.get_index_of(&template) {
-        //         // exists in cache
-        //         // send index and parameters
-        //         let compressed = format!("1*|*{}*|*{}", index.to_string(), parameters);
+        #[cfg(feature = "enable_cache_compression")]
+        fn encode(&mut self, cache: &mut Controller) {
+            let (template, parameters) = split_query(&self.sql);
 
-        //         self.sql = compressed;
-        //         cache.counter.hits += 1;
-        //     } else {
-        //         // send template and parameters
-        //         let uncompressed = format!("0*|*{}*|*{}", template, parameters);
+            #[cfg(feature = "track_cache_overhead")]
+            {
+                // let now = Instant::now();
+                let len_tuple = cache.len();
+                cache.counter.size = (len_tuple.0 + len_tuple.1 + len_tuple.2) as u64;
+                cache.counter.num_queries += 1;
+                cache.counter.raw_messsages_size += self.sql.len() as u64;
+            }
+            
+            let mut hit = false;
+            if let Some(index) = cache.get_index_of(&template) {
+                // exists in cache
+                // send index and parameters
+                let compressed = format!("1*|*{}*|*{}", index.to_string(), parameters);
 
-        //         self.sql = uncompressed;
-        //         cache.counter.misses += 1;
-        //     }
-        //     let elapsed = now.elapsed();
-        //     cache.counter.compressed_size += self.sql.len() as u64;
-        //     cache.counter.compression_time += elapsed.as_micros() as u64;
-        //     cache.counter.memory_size = cache.print_size() as u64;
+                self.sql = compressed;
+                hit = true
+            } else {
+                // send template and parameters
+                let uncompressed = format!("0*|*{}*|*{}", template, parameters);
 
-        //     // update cache for leader
-        //     cache.insert(&template, template.clone());
-        //     cache.counter.try_write_to_file("counter_logs.txt");
-        // }
+                self.sql = uncompressed;
+            }
+
+            // update cache for leader
+            cache.insert(&template, 0);
+
+            #[cfg(feature = "track_cache_overhead")] 
+            {
+                if hit {
+                    cache.counter.hits += 1;
+                } else {
+                    cache.counter.misses += 1;
+                }
+                // let elapsed = now.elapsed();
+                cache.counter.compressed_size += self.sql.len() as u64;
+                // cache.counter.compression_time += elapsed.as_micros() as u64;
+                cache.counter.memory_size = cache.print_size() as u64;
+                cache.counter.try_write_to_file("counter_logs.txt");
+            }
+        }
 
         // #[cfg(feature = "cache_compression")]
         // fn compress(&mut self, cache: &mut Controller) {
@@ -132,29 +147,32 @@ pub(crate) mod exp_util {
         //     cache.counter.try_write_to_file("counter_logs.txt");
         // }
 
-        // fn decode(&mut self, cache: &mut Controller) {
-        //     let parts: Vec<&str> = self.sql.split("*|*").collect();
-        //     if parts.len() != 3 { 
-        //         panic!("Unexpected query: {:?}", self.sql);
-        //     }
+        #[cfg(feature = "enable_cache_compression")]
+        fn decode(&mut self, cache: &mut Controller) {
+            let parts: Vec<&str> = self.sql.split("*|*").collect();
+            if parts.len() != 3 { 
+                println!("Unexpected query: {:?}", self.sql);
+                return;
+            }
 
-        //     let (compressed, index_or_template, parameters) = (parts[0], parts[1].to_string(), parts[2].to_string());
-        //     let mut template = index_or_template.clone();
+            let (compressed, index_or_template, parameters) = (parts[0], parts[1].to_string(), parts[2].to_string());
+            let mut template = index_or_template.clone();
 
-        //     if compressed == "1" {
-        //         // compressed messsage
-        //         let index = index_or_template.parse::<usize>().unwrap();
-        //         if let Some(cacheitem) = cache.get_index(index) {
-        //             template = cacheitem.value().to_string();
-        //         } else { 
-        //             panic!("Out of index: {}", index);
-        //         }
-        //     }
+            if compressed == "1" {
+                // compressed messsage
+                let index = index_or_template.parse::<usize>().unwrap();
+                if let Some(cacheitem) = cache.get_index(index) {
+                    template = cacheitem.to_string();
+                } else { 
+                    println!("Out of index: {}", index);
+                    return;
+                }
+            }
             
-        //     // update cache for followers
-        //     cache.insert(&template, template.clone());
-        //     self.sql = merge_query(template, parameters);
-        // }
+            // update cache for followers
+            cache.insert(&template, 0);
+            self.sql = merge_query(template, parameters);
+        }
 
 
         // #[cfg(feature = "cache_compression")]

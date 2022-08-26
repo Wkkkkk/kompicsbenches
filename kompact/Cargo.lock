@@ -1291,7 +1291,7 @@ checksum = "e2abad23fbc42b3700f2f279844dc832adb2b2eb069b2df918f455c4e18cc646"
 [[package]]
 name = "lecar"
 version = "0.1.0"
-source = "git+https://github.com/Wkkkkk/lecar#a884c61ea7f769ad10c83adca730e21f142ad172"
+source = "git+https://github.com/Wkkkkk/lecar#5e0f4789c13272840035cdb30842cdd05d964ba4"
 dependencies = [
  "get-size",
  "indexmap",
