@@ -63,6 +63,7 @@ pub fn merge_query(template: String, parameters: String) -> String {
     let parts = template.split("@").collect::<Vec<_>>();
     if  parts.len() != num_parameters+1 {
         println!("Unmatched templates {} \n and parameters {}", template, parameters);
+        return template;
     }
 
     let mut query = String::new();

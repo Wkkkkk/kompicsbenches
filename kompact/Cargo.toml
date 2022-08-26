@@ -60,4 +60,4 @@ simulate_partition = [] # simulate livelock and deadlock scenarios
 enable_cache_compression = []
 track_cache_overhead = []
 
-default = []
+default = ["enable_cache_compression"]
