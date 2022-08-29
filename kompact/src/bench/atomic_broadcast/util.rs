@@ -97,6 +97,7 @@ pub(crate) mod exp_util {
 
             // update cache for leader
             cache.insert(&template, 0);
+            println!("Encode query {}:{}", self.id, self.sql);
 
             #[cfg(feature = "track_cache_overhead")] 
             {
@@ -149,10 +150,11 @@ pub(crate) mod exp_util {
 
         #[cfg(feature = "enable_cache_compression")]
         fn decode(&mut self, cache: &mut Controller) {
+            println!("Decode query {}:{}", self.id, self.sql);
+
             let parts: Vec<&str> = self.sql.split("*|*").collect();
             if parts.len() != 3 { 
-                println!("Unexpected query: {:?}", self.sql);
-                return;
+                panic!("Unexpected query: {:?}", self.sql);
             }
 
             let (compressed, index_or_template, parameters) = (parts[0], parts[1].to_string(), parts[2].to_string());
@@ -164,8 +166,12 @@ pub(crate) mod exp_util {
                 if let Some(cacheitem) = cache.get_index(index) {
                     template = cacheitem.to_string();
                 } else { 
-                    println!("Out of index: {}", index);
-                    return;
+                    let index = index;
+                    let id = self.id;
+                    let sql = self.sql.clone();
+                    let size = cache.len();
+
+                    panic!("Query {}:{} is out of index: {}/{:?}", id, sql, index, size);
                 }
             }
             

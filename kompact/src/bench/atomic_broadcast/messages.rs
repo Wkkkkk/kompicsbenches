@@ -236,6 +236,14 @@ pub mod paxos {
                         Some(_ss) => unimplemented!(),
                         None => {}
                     }
+                    match &acc_sync.cache {
+                        Some(cache) => {
+                            let cache_bytes = cache.as_bytes();
+                            buf.put_u32(cache_bytes.len() as u32);
+                            buf.put_slice(cache_bytes);
+                        }
+                        None => buf.put_u32(0),
+                    }
                 }
                 PaxosMsg::FirstAccept(f) => {
                     buf.put_u8(FIRSTACCEPT_ID);
@@ -323,7 +331,16 @@ pub mod paxos {
                     let sync_item =
                         Self::deserialise_syncitem(buf).expect("Failed to deserialize SyncItem");
                     let stopsign = None;
-                    let cache = None;
+                    let cache = match buf.get_u32() {
+                      0 => None,
+                      data_len => {
+                        let mut data = vec![0; data_len as usize];
+                        buf.copy_to_slice(&mut data);
+
+                        let string = String::from_utf8(data).expect("Failed to convert cache string");
+                        Some(string)
+                      } 
+                    };
                     let acc_sync = AcceptSync::with(n, sync_item, sync_idx, decide_idx, stopsign, cache);
                     Message::with(from, to, PaxosMsg::AcceptSync(acc_sync))
                 }
