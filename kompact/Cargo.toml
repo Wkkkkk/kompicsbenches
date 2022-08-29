@@ -7,8 +7,8 @@ edition = "2018"
 [dependencies]
 #kompact 				= { git = "https://github.com/kompics/kompact"}
 kompact 				= { git = "https://github.com/kompics/kompact", rev = "94956af" }
-#omnipaxos_core          = { git = "https://github.com/Wkkkkk/omnipaxos",  branch = "stammis", features = ["batch_accept"] }
-omnipaxos_core          = { path = "../omnipaxos/omnipaxos_core", features = ["batch_accept"] }
+omnipaxos_core          = { git = "https://github.com/Wkkkkk/omnipaxos",  branch = "stammis", features = ["batch_accept"] }
+#omnipaxos_core          = { path = "../omnipaxos/omnipaxos_core", features = ["batch_accept"] }
 #omnipaxos              = { git = "https://github.com/haraldng/omnipaxos", branch = "kompicsbenches-exp", features = ["batch_accept"] }
 #omnipaxos_core          = { git = "https://github.com/haraldng/omnipaxos" }
 lecar                   = { git = "https://github.com/Wkkkkk/lecar" }

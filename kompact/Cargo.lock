@@ -1596,6 +1596,7 @@ dependencies = [
 [[package]]
 name = "omnipaxos_core"
 version = "0.1.0"
+source = "git+https://github.com/Wkkkkk/omnipaxos?branch=stammis#1072122114bf111f9ee2ce4acdab6086c46aff27"
 dependencies = [
  "lecar",
  "serde",
