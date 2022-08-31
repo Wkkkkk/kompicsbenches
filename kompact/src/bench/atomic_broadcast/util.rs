@@ -71,6 +71,7 @@ pub(crate) mod exp_util {
         fn encode(&mut self, cache: &mut Controller) {
             let (template, parameters) = split_query(&self.sql);
 
+            let now = Instant::now();
             #[cfg(feature = "track_cache_overhead")]
             {
                 // let now = Instant::now();
@@ -97,7 +98,7 @@ pub(crate) mod exp_util {
 
             // update cache for leader
             cache.insert(&template, 0);
-            println!("Encode query {}:{}", self.id, self.sql);
+            //println!("Encode query {}:{}", self.id, self.sql);
 
             #[cfg(feature = "track_cache_overhead")] 
             {
@@ -106,9 +107,9 @@ pub(crate) mod exp_util {
                 } else {
                     cache.counter.misses += 1;
                 }
-                // let elapsed = now.elapsed();
+                let elapsed = now.elapsed();
                 cache.counter.compressed_size += self.sql.len() as u64;
-                // cache.counter.compression_time += elapsed.as_micros() as u64;
+                cache.counter.compression_time += elapsed.as_micros() as u64;
                 cache.counter.memory_size = cache.print_size() as u64;
                 cache.counter.try_write_to_file("counter_logs.txt");
             }
@@ -150,7 +151,7 @@ pub(crate) mod exp_util {
 
         #[cfg(feature = "enable_cache_compression")]
         fn decode(&mut self, cache: &mut Controller) {
-            println!("Decode query {}:{}", self.id, self.sql);
+            //println!("Decode query {}:{}", self.id, self.sql);
 
             let parts: Vec<&str> = self.sql.split("*|*").collect();
             if parts.len() != 3 { 
