@@ -1,11 +1,11 @@
 use super::{
     communicator::{AtomicBroadcastCompMsg, CommunicationPort, Communicator, CommunicatorMsg},
     messages::{
+        *,
         paxos::{
             Reconfig, ReconfigInit, ReconfigSer, ReconfigurationMsg, SegmentRequest,
             SegmentTransfer, SequenceMetaData, SequenceSegment,
-        },
-        StopMsg as NetStopMsg, *,
+        }, StopMsg as NetStopMsg,
     },
 };
 #[cfg(test)]
@@ -41,7 +41,8 @@ use std::io::Write;
 
 #[cfg(feature = "simulate_partition")]
 use crate::bench::atomic_broadcast::messages::{PartitioningExpMsg, PartitioningExpMsgDeser};
-use crate::bench::atomic_broadcast::{mp_le::MultiPaxosLeaderComp, vr_le::VRLeaderElectionComp};
+use crate::bench::atomic_broadcast::vr_le::VRLeaderElectionComp;
+use crate::bench::atomic_broadcast::multi_paxos::participant::Participant;
 #[cfg(feature = "simulate_partition")]
 use crate::bench::serialiser_ids::PARTITIONING_EXP_ID;
 
@@ -117,7 +118,7 @@ struct HoldBackProposals {
 pub enum LeaderElectionComp {
     BLE(Arc<Component<BallotLeaderComp>>),
     VR(Arc<Component<VRLeaderElectionComp>>),
-    MultiPaxos(Arc<Component<MultiPaxosLeaderComp>>),
+    MultiPaxos(Arc<Component<Participant>>),
 }
 
 pub enum LeaderElection {

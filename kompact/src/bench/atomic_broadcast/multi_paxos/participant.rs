@@ -3,21 +3,21 @@ use crate::bench::atomic_broadcast::util::io_metadata::IOMetaData;
 use crate::bench::atomic_broadcast::{
     ble::{Ballot, BallotLeaderElection, Stop},
     messages::{
-        paxos::mp_leader_election::{MPLeaderSer, *},
+        paxos::mp_leader_election::{*, MPLeaderSer},
         StopMsg as NetStopMsg, StopMsgDeser,
     },
-    mp_le::State::Follower,
 };
 use hashbrown::HashSet;
 use kompact::prelude::*;
 use omnipaxos::leader_election::Leader;
 use rand::{prelude::Rng, thread_rng};
 use std::time::Duration;
+use crate::bench::atomic_broadcast::multi_paxos::participant::State::Follower;
 
 pub struct ElectionOptions {
-    ping_period: Duration,
-    timeout_min: Duration,
-    timeout_max: Duration,
+    pub(crate) ping_period: Duration,
+    pub(crate) timeout_min: Duration,
+    pub(crate) timeout_max: Duration,
 }
 
 impl ElectionOptions {
@@ -36,10 +36,10 @@ enum State {
     Follower,
 }
 
-/// The `MultiPaxosLeaderComp` is an identical implementation of the `Participant` class in the leader election of frankenpaxos:
+/// An identical implementation of the `Participant` class in the leader election of frankenpaxos:
 /// https://github.com/mwhittaker/frankenpaxos/blob/master/shared/src/main/scala/frankenpaxos/election/basic/Participant.scala
 #[derive(ComponentDefinition)]
-pub struct MultiPaxosLeaderComp {
+pub struct Participant {
     ctx: ComponentContext<Self>,
     /*** Variables directly equivalent to the ones with the same name in the original `Participant` implementation ***/
     callback: ProvidedPort<BallotLeaderElection>,
@@ -61,20 +61,20 @@ pub struct MultiPaxosLeaderComp {
     disconnected_peers: Vec<u64>,
 }
 
-impl MultiPaxosLeaderComp {
+impl Participant {
     pub fn with(
         peers: Vec<ActorPath>,
         pid: u64,
         initial_leader_index: u64,
         election_options: ElectionOptions,
-    ) -> MultiPaxosLeaderComp {
+    ) -> Participant {
         let index = pid;
         let state = if index == initial_leader_index {
             State::Leader
         } else {
             State::Follower
         };
-        MultiPaxosLeaderComp {
+        Participant {
             ctx: ComponentContext::uninitialised(),
             callback: ProvidedPort::uninitialised(),
             index,
@@ -230,7 +230,7 @@ impl MultiPaxosLeaderComp {
     }
 }
 
-impl ComponentLifecycle for MultiPaxosLeaderComp {
+impl ComponentLifecycle for Participant {
     fn on_start(&mut self) -> Handled {
         match self.state {
             State::Leader => self.start_ping_timer(),
@@ -246,13 +246,13 @@ impl ComponentLifecycle for MultiPaxosLeaderComp {
     }
 }
 
-impl Provide<BallotLeaderElection> for MultiPaxosLeaderComp {
+impl Provide<BallotLeaderElection> for Participant {
     fn handle(&mut self, _: <BallotLeaderElection as Port>::Request) -> Handled {
         unimplemented!()
     }
 }
 
-impl Actor for MultiPaxosLeaderComp {
+impl Actor for Participant {
     type Message = Stop;
 
     fn receive_local(&mut self, stop: Stop) -> Handled {

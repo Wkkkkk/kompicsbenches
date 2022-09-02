@@ -24,5 +24,9 @@ pub const STOP_ID: SerId = 63;
 pub const VR_ID: SerId = 65;
 pub const MP_ID: SerId = 66;
 
+pub const MP_LEADER_ID: SerId = 67;
+pub const MP_ACCEPTOR_ID: SerId = 68;
+pub const MP_REPLICA_ID: SerId = 69;
+
 #[cfg(feature = "simulate_partition")]
 pub const PARTITIONING_EXP_ID: SerId = 64;
