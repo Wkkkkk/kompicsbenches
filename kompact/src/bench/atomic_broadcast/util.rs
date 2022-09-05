@@ -148,7 +148,7 @@ pub(crate) mod exp_util {
 
     pub fn create_experiment_str(c: &AtomicBroadcastRequest) -> String {
         format!(
-            "{},{},{},{},{},{},{}",
+            "{},{},{},{},{},{},{},{},{},{},{}",
             c.algorithm,
             c.number_of_nodes,
             c.concurrent_proposals,
@@ -156,6 +156,10 @@ pub(crate) mod exp_util {
             c.reconfiguration.clone(),
             c.reconfig_policy,
             c.network_scenario,
+            c.probability,
+            c.data_size,
+            c.compression_rate,
+            c.preprocessing_time,
         )
     }
 

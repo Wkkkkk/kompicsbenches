@@ -47,6 +47,10 @@ pub struct AtomicBroadcastMaster {
     concurrent_proposals: Option<u64>,
     reconfiguration: Option<(ReconfigurationPolicy, Vec<u64>)>,
     network_scenario: Option<NetworkScenario>,
+    probability: Option<f64>,
+    data_size: Option<u64>,
+    compression_rate: Option<f64>,
+    preprocessing_time: Option<u64>,
     system: Option<KompactSystem>,
     finished_latch: Option<Arc<CountdownEvent>>,
     iteration_id: u32,
@@ -69,6 +73,10 @@ impl AtomicBroadcastMaster {
             concurrent_proposals: None,
             reconfiguration: None,
             network_scenario: None,
+            probability: None,
+            data_size: None,
+            compression_rate: None,
+            preprocessing_time: None,
             system: None,
             finished_latch: None,
             iteration_id: 0,
@@ -142,6 +150,10 @@ impl AtomicBroadcastMaster {
                 self.concurrent_proposals.unwrap(),
                 nodes_id,
                 network_scenario,
+                self.probability.unwrap(),
+                self.data_size.unwrap(),
+                self.compression_rate.unwrap(),
+                self.preprocessing_time.unwrap(),
                 reconfig,
                 client_timeout,
                 preloaded_log_size,
@@ -656,6 +668,10 @@ impl DistributedBenchmarkMaster for AtomicBroadcastMaster {
             self.reconfiguration = None;
             self.concurrent_proposals = None;
             self.num_proposals = None;
+            self.probability = None;
+            self.data_size = None;
+            self.compression_rate = None;
+            self.preprocessing_time = None;
             self.experiment_str = None;
             self.meta_results_sub_dir = None;
             self.num_timed_out.clear();

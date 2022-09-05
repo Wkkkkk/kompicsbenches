@@ -65,4 +65,8 @@ message AtomicBroadcastRequest {
 	string reconfiguration = 5;
 	string reconfig_policy = 6;
 	string network_scenario = 7;
+	double probability = 8;
+	uint64 data_size = 9;
+	double compression_rate = 10;
+	uint64 preprocessing_time = 11;
 }

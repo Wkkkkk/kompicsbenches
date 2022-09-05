@@ -238,10 +238,18 @@ object Benchmarks extends ParameterDescriptionImplicits {
   private val atomicBroadcastTestNodes = List(3);
   private val atomicBroadcastTestProposals = List(10L.k);
   private val atomicBroadcastTestConcurrentProposals = List(200L);
+  private val atomicBroadcastTestProbability = List(0.5);
+  private val atomicBroadcastTestDataSize = List(10L, 1000L);
+  private val atomicBroadcastTestCompressionRate = List(0.2, 0.5);
+  private val atomicBroadcastTestPreprocessingTime = List(1L, 5L);
 
   private val atomicBroadcastNodes = List(3, 5);
   private val atomicBroadcastProposals = List(5L.mio);
   private val atomicBroadcastConcurrentProposals = List(50L.k);
+  private val atomicBroadcastProbability = List(0.2, 0.5, 0.8);
+  private val atomicBroadcastDataSize = List(10L, 100L, 500L, 1000L, 2000L);
+  private val atomicBroadcastCompressionRate = List(0.2, 0.5, 0.8);
+  private val atomicBroadcastPreprocessingTime = List(1L, 3L, 5L, 7L, 10L);
 
   private val algorithms = List("paxos", "raft_pv_qc");
   private val reconfig = List("single", "majority");
@@ -256,7 +264,11 @@ object Benchmarks extends ParameterDescriptionImplicits {
       atomicBroadcastTestConcurrentProposals,
       List("off"),
       List("none"),
-      List("fully_connected")
+      List("fully_connected"),
+      atomicBroadcastTestProbability,
+      atomicBroadcastTestDataSize,
+      atomicBroadcastTestCompressionRate,
+      atomicBroadcastTestPreprocessingTime
     );
 
   private val atomicBroadcastReconfigTestSpace = ParameterSpacePB // test space with reconfig
@@ -267,7 +279,11 @@ object Benchmarks extends ParameterDescriptionImplicits {
       atomicBroadcastTestConcurrentProposals,
       reconfig,
       reconfig_policy,
-      network_scenarios
+      network_scenarios,
+      atomicBroadcastTestProbability,
+      atomicBroadcastTestDataSize,
+      atomicBroadcastTestCompressionRate,
+      atomicBroadcastTestPreprocessingTime
     );
 
   private val atomicBroadcastTestSpace = atomicBroadcastNormalTestSpace.append(atomicBroadcastReconfigTestSpace);
@@ -280,7 +296,11 @@ object Benchmarks extends ParameterDescriptionImplicits {
       atomicBroadcastConcurrentProposals,
       List("off"),
       List("none"),
-      network_scenarios
+      network_scenarios,
+      atomicBroadcastProbability,
+      atomicBroadcastDataSize,
+      atomicBroadcastCompressionRate,
+      atomicBroadcastPreprocessingTime
     );
 
   private val atomicBroadcastReconfigSpace = ParameterSpacePB
@@ -291,7 +311,11 @@ object Benchmarks extends ParameterDescriptionImplicits {
       atomicBroadcastConcurrentProposals,
       reconfig,
       reconfig_policy,
-      network_scenarios
+      network_scenarios,
+      atomicBroadcastProbability,
+      atomicBroadcastDataSize,
+      atomicBroadcastCompressionRate,
+      atomicBroadcastPreprocessingTime
     );
 
   private val atomicBroadcastSpace = atomicBroadcastNormalSpace.append(atomicBroadcastReconfigSpace);
@@ -315,7 +339,7 @@ object Benchmarks extends ParameterDescriptionImplicits {
     },
     space = atomicBroadcastNormalSpace
       .msg[AtomicBroadcastRequest] {
-        case (a, nn, np, cp, r, rp, ns) =>
+        case (a, nn, np, cp, r, rp, ns, pro, ds, cr, pt) =>
           AtomicBroadcastRequest(
             algorithm = a,
             numberOfNodes = nn,
@@ -324,11 +348,15 @@ object Benchmarks extends ParameterDescriptionImplicits {
             reconfiguration = r,
             reconfigPolicy = rp,
             networkScenario = ns,
+            probability = pro,
+            dataSize = ds,
+            compressionRate = cr,
+            preprocessingTime = pt
           )
       },
     testSpace = atomicBroadcastNormalTestSpace
       .msg[AtomicBroadcastRequest] {
-        case (a, nn, np, cp, r, rp, ns) =>
+        case (a, nn, np, cp, r, rp, ns, pro, ds, cr, pt) =>
           AtomicBroadcastRequest(
             algorithm = a,
             numberOfNodes = nn,
@@ -337,6 +365,10 @@ object Benchmarks extends ParameterDescriptionImplicits {
             reconfiguration = r,
             reconfigPolicy = rp,
             networkScenario = ns,
+            probability = pro,
+            dataSize = ds,
+            compressionRate = cr,
+            preprocessingTime = pt
           )
       }
   );

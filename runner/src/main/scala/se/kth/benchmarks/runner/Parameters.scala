@@ -176,6 +176,33 @@ object ParameterSpacePB {
       } yield (i1, i2, i3, i4, i5, i6, i7);
       new TupleSpace(iter)
     }
+    
+    def cross[T1, T2, T3, T4, T5, T6, T7, T8, T9, T10, T11](p1: Traversable[T1],
+                                  p2: Traversable[T2],
+                                  p3: Traversable[T3],
+                                  p4: Traversable[T4],
+                                  p5: Traversable[T5],
+                                  p6: Traversable[T6],
+                                  p7: Traversable[T7],
+                                  p8: Traversable[T8],
+                                  p9: Traversable[T9],
+                                  p10:Traversable[T10],
+                                  p11:Traversable[T11] ): TupleSpace[(T1, T2, T3, T4, T5, T6, T7, T8, T9, T10, T11)] = {
+      val iter = for {
+        i1 <- p1;
+        i2 <- p2;
+        i3 <- p3;
+        i4 <- p4;
+        i5 <- p5;
+        i6 <- p6;
+        i7 <- p7;
+        i8 <- p8;
+        i9 <- p9;
+        i10 <- p10;
+        i11 <- p11
+      } yield (i1, i2, i3, i4, i5, i6, i7, i8, i9, i10, i11);
+      new TupleSpace(iter)
+    }
 
   class TupleSpace[T](val iter: Traversable[T]) {
     def msg[M <: Message[M]: TypeTag](f: T => M): ParameterSpacePB[M] = {
