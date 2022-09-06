@@ -243,13 +243,13 @@ object Benchmarks extends ParameterDescriptionImplicits {
   private val atomicBroadcastTestCompressionRate = List(0.2, 0.5);
   private val atomicBroadcastTestPreprocessingTime = List(1L, 5L);
 
-  private val atomicBroadcastNodes = List(3, 5);
-  private val atomicBroadcastProposals = List(5L.mio);
-  private val atomicBroadcastConcurrentProposals = List(50L.k);
-  private val atomicBroadcastProbability = List(0.2, 0.5, 0.8);
-  private val atomicBroadcastDataSize = List(10L, 100L, 500L, 1000L, 2000L);
+  private val atomicBroadcastNodes = List(3);
+  private val atomicBroadcastProposals = List(1L.mio);
+  private val atomicBroadcastConcurrentProposals = List(10L.k, 50L.k, 100L.k);
+  private val atomicBroadcastProbability = List(0.0, 0.5, 1.0);
+  private val atomicBroadcastDataSize = List(10L, 100L, 500L);
   private val atomicBroadcastCompressionRate = List(0.2, 0.5, 0.8);
-  private val atomicBroadcastPreprocessingTime = List(1L, 3L, 5L, 7L, 10L);
+  private val atomicBroadcastPreprocessingTime = List(2L, 5L, 10L);
 
   //private val algorithms = List("paxos", "raft_pv_qc");
   private val algorithms = List("paxos");
