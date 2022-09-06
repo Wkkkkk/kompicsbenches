@@ -16,6 +16,7 @@ use std::{
     time::{Duration, SystemTime},
 };
 use synchronoise::{event::CountdownError, CountdownEvent};
+use rand::random;
 
 const STOP_TIMEOUT: Duration = Duration::from_secs(30);
 const PROPOSAL_ID_SIZE: usize = 8; // size of u64
@@ -204,7 +205,14 @@ impl<T: LogCommand> Client<T> {
     }
 
     fn create_proposal_data(&mut self, id: u64) -> T {
-        T::with(id) // TODO Change this for custom experiments
+        // T::with(id) // TODO Change this for custom experiments
+        let p = rand::random::<f64>();
+        let mut data_size = self.data_size;
+        if p < self.probability {
+            data_size = (data_size as f64 * ( 1.0 - self.compression_rate)) as u64;
+        } 
+
+        T::with(id, data_size)
     }
 
     fn propose_normal(&mut self, id: u64) -> T::Response {

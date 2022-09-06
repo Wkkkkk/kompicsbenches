@@ -5,7 +5,7 @@ pub(crate) mod exp_util {
     use hocon::HoconLoader;
     use kompact::prelude::Buf;
     use omnipaxos_core::storage::{memory_storage::MemoryStorage, Entry, Snapshot, Storage};
-    use serde::{de::DeserializeOwned, Serialize};
+    use serde::{de::DeserializeOwned, Serialize, Deserialize};
     use std::{fmt::Debug, hash::Hash, path::PathBuf, time::Duration};
 
     pub const TCP_NODELAY: bool = true;
@@ -22,7 +22,7 @@ pub(crate) mod exp_util {
     {
         type Response: Serialize + DeserializeOwned + Send + Debug + Clone + Eq + Hash;
 
-        fn with(id: u64) -> Self;
+        fn with(id: u64, len: u64) -> Self;
         fn create_response(&self) -> Self::Response;
     }
     pub trait LogSnapshot<T: LogCommand>: Snapshot<T> + Send + Sync + 'static + Debug {}
@@ -31,17 +31,22 @@ pub(crate) mod exp_util {
     {
     }
 
-    pub type EntryType = Vec<u8>;
+    // pub type EntryType = Vec<u8>;
+
+    #[derive(Serialize, Deserialize, Clone, Debug)]
+    pub struct EntryType {
+        id: u64,
+        sql: Vec<u8>,
+    }
     impl LogCommand for EntryType {
         type Response = u64;
 
-        fn with(id: u64) -> Self {
-            bincode::serialize(&id).expect("Failed to serialize data id")
+        fn with(id: u64, len: u64) -> Self {
+            EntryType { id, sql: vec![0; len as usize] }
         }
 
         fn create_response(&self) -> Self::Response {
-            bincode::deserialize_from(self.as_slice().reader())
-                .expect("Failed to deserialize data id")
+            self.id
         }
     }
 

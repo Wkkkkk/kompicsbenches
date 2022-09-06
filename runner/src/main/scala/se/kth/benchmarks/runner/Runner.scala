@@ -200,15 +200,15 @@ class FullSink(prefix: String, rootFolder: File) extends DataSink with LazyLoggi
   }
 
   override def sink(bench: String, params: ParameterDescription, data: Seq[Double]): Unit = {
-    val f = folder.resolve(s"${bench}-${params.toPath}.data").toFile;
-    if (f.createNewFile()) {
-      this.withWriter(f) { w =>
-        data.foreach(w.println)
-      }
-    } else {
-      logger.error(s"Could not log results for run ${prefix}-${bench} (file could not be created)!");
-      logger.info(s"Result were ${data.mkString(",")}");
-    }
+    // val f = folder.resolve(s"${bench}-${params.toPath}.data").toFile;
+    // if (f.createNewFile()) {
+    //   this.withWriter(f) { w =>
+    //     data.foreach(w.println)
+    //   }
+    // } else {
+    //   logger.error(s"Could not log results for run ${prefix}-${bench} (file could not be created)!");
+    //   logger.info(s"Result were ${data.mkString(",")}");
+    // }
   }
 }
 

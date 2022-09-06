@@ -160,6 +160,7 @@ where
     S: LogSnapshot<T>,
     B: ReplicaStore<T, S>,
 {
+    preprocessing_time: u64,
     ctx: ComponentContext<Self>,
     pid: u64,
     initial_configuration: Vec<u64>,
@@ -204,8 +205,10 @@ where
         is_reconfig_exp: bool,
         experiment_params: ExperimentParams,
         leader_election: LeaderElection,
+        preprocessing_time: u64,
     ) -> Self {
         PaxosComp {
+            preprocessing_time,
             ctx: ComponentContext::uninitialised(),
             pid: 0,
             initial_configuration,
@@ -732,6 +735,9 @@ where
             .paxos_replicas
             .get(idx)
             .expect("Could not get PaxosComp actor ref despite being leader");
+        
+        let sleep_time = self.preprocessing_time * 1000;
+        spin_sleep::sleep(Duration::new(0, sleep_time as u32));
         active_paxos.actor_ref().tell(PaxosReplicaMsg::Propose(p));
     }
 

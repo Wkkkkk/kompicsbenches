@@ -38,9 +38,9 @@ impl ClientParamsDeser {
     }
 }
 
-fn get_deser_clientparams_and_subdir(s: &str) -> (ClientParamsDeser, String) {
+fn get_deser_clientparams_and_subdir(s: &str) -> (ClientParamsDeser, String, u64) {
     let split: Vec<_> = s.split(',').collect();
-    assert_eq!(split.len(), 7);
+    assert_eq!(split.len(), 11);
     let algorithm = split[0].to_lowercase();
     let num_nodes = split[1]
         .parse::<u64>()
@@ -56,7 +56,10 @@ fn get_deser_clientparams_and_subdir(s: &str) -> (ClientParamsDeser, String) {
     };
     let cp = ClientParamsDeser::with(algorithm, num_nodes, is_reconfig_exp);
     let subdir = create_metaresults_sub_dir(num_nodes, concurrent_proposals, reconfig.as_str());
-    (cp, subdir)
+    let preprocessing_time = split[10]
+        .parse::<u64>()
+        .unwrap_or_else(|_| panic!("{}' does not have preprocessing time", split[10]));
+    (cp, subdir, preprocessing_time)
 }
 
 pub struct AtomicBroadcastClient {
@@ -87,7 +90,7 @@ impl DistributedBenchmarkClient for AtomicBroadcastClient {
         bc.validate();
         let system = crate::kompact_system_provider::global()
             .new_remote_system_with_threads_config("atomicbroadcast", 8, conf, bc, TCP_NODELAY);
-        let (params, meta_subdir) = get_deser_clientparams_and_subdir(&c.experiment_str);
+        let (params, meta_subdir, preprocessing_time) = get_deser_clientparams_and_subdir(&c.experiment_str);
         let experiment_params =
             ExperimentParams::load_from_file(CONFIG_PATH, meta_subdir, c.experiment_str);
         let initial_config: Vec<u64> = (1..=params.num_nodes).collect();
@@ -104,6 +107,7 @@ impl DistributedBenchmarkClient for AtomicBroadcastClient {
                         params.is_reconfig_exp,
                         experiment_params,
                         leader_election,
+                        preprocessing_time,
                     )
                 });
                 unique_reg_f.wait_expect(REGISTER_TIMEOUT, "ReplicaComp failed to register!");

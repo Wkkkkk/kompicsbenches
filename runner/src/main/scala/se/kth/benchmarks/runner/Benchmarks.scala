@@ -251,7 +251,8 @@ object Benchmarks extends ParameterDescriptionImplicits {
   private val atomicBroadcastCompressionRate = List(0.2, 0.5, 0.8);
   private val atomicBroadcastPreprocessingTime = List(1L, 3L, 5L, 7L, 10L);
 
-  private val algorithms = List("paxos", "raft_pv_qc");
+  //private val algorithms = List("paxos", "raft_pv_qc");
+  private val algorithms = List("paxos");
   private val reconfig = List("single", "majority");
   private val reconfig_policy = List("replace-follower", "replace-leader");
   private val network_scenarios = List("fully_connected", "quorum_loss", "constrained_election", "chained")

@@ -34,6 +34,7 @@ quanta                  = "0.7.2"
 pretty-bytes            = {version = "0.2.2", optional = true}
 serde                   = { version = "1.0", features = ["derive"] }
 bincode                 = "1.3.3"
+spin_sleep              = "1.1.1"
 
 [dev-dependencies]
 uuid = { version = "0.8", features = ["v4"] }
@@ -54,4 +55,4 @@ periodic_client_logging = []
 periodic_replica_logging = []
 simulate_partition = [] # simulate livelock and deadlock scenarios
 
-default = []
+default = ["periodic_client_logging"]

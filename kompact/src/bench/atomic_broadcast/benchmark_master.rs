@@ -535,6 +535,10 @@ impl DistributedBenchmarkMaster for AtomicBroadcastMaster {
         self.experiment_str = Some(experiment_str.clone());
         self.num_proposals = Some(c.number_of_proposals);
         self.concurrent_proposals = Some(c.concurrent_proposals);
+        self.probability = Some(c.probability);
+        self.data_size = Some(c.data_size);
+        self.compression_rate = Some(c.compression_rate);
+        self.preprocessing_time = Some(c.preprocessing_time);
         self.meta_results_sub_dir = Some(create_metaresults_sub_dir(
             c.number_of_nodes,
             c.concurrent_proposals,
