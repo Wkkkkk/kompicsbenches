@@ -174,18 +174,20 @@ impl DistributedBenchmarkClient for AtomicBroadcastClient {
             if let Some(replica) = self.paxos_comp.take() {
                 let kill_replica_f = system.kill_notify(replica);
                 kill_replica_f
-                    .wait_timeout(REGISTER_TIMEOUT)
-                    .expect("Paxos Replica never died!");
+                    .wait_timeout(REGISTER_TIMEOUT);
+                    //.expect("Paxos Replica never died!");
             }
             if let Some(raft_replica) = self.raft_comp.take() {
                 let kill_raft_f = system.kill_notify(raft_replica);
                 kill_raft_f
-                    .wait_timeout(REGISTER_TIMEOUT)
-                    .expect("Raft Replica never died!");
+                    .wait_timeout(REGISTER_TIMEOUT);
+                    //.expect("Raft Replica never died!");
             }
+            println!("killed");
             system
-                .shutdown()
-                .expect("Kompact didn't shut down properly");
+                .shutdown_async();
+                //.expect("Kompact didn't shut down properly");
         }
+        println!("Shut down");
     }
 }
