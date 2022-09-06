@@ -252,10 +252,13 @@ object Benchmarks extends ParameterDescriptionImplicits {
   private val atomicBroadcastPreprocessingTime = List(2L, 5L, 10L);
 
   //private val algorithms = List("paxos", "raft_pv_qc");
+  //private val reconfig = List("single", "majority");
+  //private val reconfig_policy = List("replace-follower", "replace-leader");
+  //private val network_scenarios = List("fully_connected", "quorum_loss", "constrained_election", "chained")
   private val algorithms = List("paxos");
-  private val reconfig = List("single", "majority");
-  private val reconfig_policy = List("replace-follower", "replace-leader");
-  private val network_scenarios = List("fully_connected", "quorum_loss", "constrained_election", "chained")
+  private val reconfig = List("off");
+  private val reconfig_policy = List("none");
+  private val network_scenarios = List("fully_connected");
 
   private val atomicBroadcastNormalTestSpace = ParameterSpacePB // test space without reconfig
     .cross(
