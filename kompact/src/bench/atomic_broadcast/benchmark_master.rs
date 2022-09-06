@@ -607,7 +607,7 @@ impl DistributedBenchmarkMaster for AtomicBroadcastMaster {
         partitioning_actor
             .actor_ref()
             .tell(IterationControlMsg::Run);
-        leader_election_latch.wait(); // wait until leader is established
+        leader_election_latch.wait_timeout(Duration::from_secs(10)); // wait until leader is established
         self.partitioning_actor = Some(partitioning_actor);
         self.client_comp = Some(client_comp);
     }

@@ -160,13 +160,13 @@ impl DistributedBenchmarkClient for AtomicBroadcastClient {
             let kill_comps_f = paxos
                 .actor_ref()
                 .ask_with(|p| PaxosCompMsg::KillComponents(Ask::new(p, ())));
-            kill_comps_f.wait();
+            kill_comps_f.wait_timeout(Duration::from_secs(10)); 
         }
         if let Some(raft) = &self.raft_comp {
             let kill_comps_f = raft
                 .actor_ref()
                 .ask_with(|p| RaftCompMsg::KillComponents(Ask::new(p, ())));
-            kill_comps_f.wait();
+            kill_comps_f.wait_timeout(Duration::from_secs(10)); 
         }
         println!("KillAsk complete");
         if last_iteration {
