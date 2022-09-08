@@ -205,8 +205,8 @@ object ParameterSpacePB {
     }
 
   class TupleSpace[T](val iter: Traversable[T]) {
-    def msg[M <: Message[M]: TypeTag](f: T => M): ParameterSpacePB[M] = {
-      ParameterSpacePB(iter.map(f).toSeq)
+    def msg[M <: Message[M]: TypeTag](f: T => M, skip: Int = 0): ParameterSpacePB[M] = {
+      ParameterSpacePB(iter.drop(skip).map(f).toSeq)
     }
 
     def append(other: TupleSpace[T]): TupleSpace[T] = {
