@@ -394,28 +394,28 @@ impl AtomicBroadcastMaster {
     }
 
     fn persist_latency_results(&mut self, latencies: &[Duration]) {
-        let latency_dir = self.get_meta_results_dir(Some("latency"));
-        create_dir_all(&latency_dir)
-            .unwrap_or_else(|_| panic!("Failed to create given directory: {}", &latency_dir));
-        let mut latency_file = OpenOptions::new()
-            .create(true)
-            .append(true)
-            .open(format!(
-                "{}/raw_{}.data",
-                &latency_dir,
-                self.experiment_str.as_ref().unwrap()
-            ))
-            .expect("Failed to open latency file");
+        // let latency_dir = self.get_meta_results_dir(Some("latency"));
+        // create_dir_all(&latency_dir)
+        //    .unwrap_or_else(|_| panic!("Failed to create given directory: {}", &latency_dir));
+        // let mut latency_file = OpenOptions::new()
+        //    .create(true)
+        //     .append(true)
+        //     .open(format!(
+        //         "{}/raw_{}.data",
+        //         &latency_dir,
+        //         self.experiment_str.as_ref().unwrap()
+        //     ))
+        //     .expect("Failed to open latency file");
 
         let histo = self.latency_hist.as_mut().unwrap();
         for l in latencies {
             let latency = l.as_millis() as u64;
-            writeln!(latency_file, "{}", latency).expect("Failed to write raw latency");
+            // writeln!(latency_file, "{}", latency).expect("Failed to write raw latency");
             histo.record(latency).expect("Failed to record histogram");
         }
-        latency_file
-            .flush()
-            .expect("Failed to flush raw latency file");
+        // latency_file
+        //     .flush()
+        //     .expect("Failed to flush raw latency file");
     }
 
     fn persist_latency_summary(&mut self) {

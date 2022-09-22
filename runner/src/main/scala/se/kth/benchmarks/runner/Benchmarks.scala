@@ -246,10 +246,10 @@ object Benchmarks extends ParameterDescriptionImplicits {
   private val atomicBroadcastNodes = List(3);
   private val atomicBroadcastProposals = List(1L.mio);
   private val atomicBroadcastConcurrentProposals = List(10L.k, 50L.k, 100L.k);
-  private val atomicBroadcastProbability = List(0.0);
-  private val atomicBroadcastDataSize = List(10L, 100L, 500L);
-  private val atomicBroadcastCompressionRate = List(0);
-  private val atomicBroadcastPreprocessingTime = List(0L);
+  private val atomicBroadcastProbability = List(0.0, 0.5, 1.0);
+  private val atomicBroadcastDataSize = List(1024L, 4096L, 16384L, 65536L);
+  private val atomicBroadcastCompressionRate = List(0.2, 0.5, 0.8);
+  private val atomicBroadcastPreprocessingTime = List(100L, 500L, 1000L);
 
   //private val algorithms = List("paxos", "raft_pv_qc");
   //private val reconfig = List("single", "majority");
@@ -306,6 +306,21 @@ object Benchmarks extends ParameterDescriptionImplicits {
       atomicBroadcastCompressionRate,
       atomicBroadcastPreprocessingTime
     );
+  
+  private val atomicBroadcastNormalBaselineSpace = ParameterSpacePB
+    .cross(
+      algorithms,
+      atomicBroadcastNodes,
+      atomicBroadcastProposals,
+      atomicBroadcastConcurrentProposals,
+      List("off"),
+      List("none"),
+      network_scenarios,
+      List(0.0),
+      atomicBroadcastDataSize,
+      List(0.0),
+      List(0L)
+    );
 
   private val atomicBroadcastReconfigSpace = ParameterSpacePB
     .cross(
@@ -342,6 +357,7 @@ object Benchmarks extends ParameterDescriptionImplicits {
       stub.atomicBroadcast(request)
     },
     space = atomicBroadcastNormalSpace
+      .append(atomicBroadcastNormalBaselineSpace)
       .msg[AtomicBroadcastRequest] ({
         case (a, nn, np, cp, r, rp, ns, pro, ds, cr, pt) =>
           AtomicBroadcastRequest(
@@ -358,7 +374,7 @@ object Benchmarks extends ParameterDescriptionImplicits {
             preprocessingTime = pt
           )
       },
-      8),
+      0),
     testSpace = atomicBroadcastNormalTestSpace
       .msg[AtomicBroadcastRequest] {
         case (a, nn, np, cp, r, rp, ns, pro, ds, cr, pt) =>

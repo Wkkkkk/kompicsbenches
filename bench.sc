@@ -17,8 +17,8 @@ import $ivy.`com.decodified::scala-ssh:0.9.0`, com.decodified.scalassh.{SSH, Hos
 
 //val runnerAddr = "127.0.0.1:45678";
 //val masterAddr = "127.0.0.1:45679";
-val runnerAddr = "10.128.15.204:45678";
-val masterAddr = "10.128.15.204:45679";
+val runnerAddr = "10.132.0.7:45678";
+val masterAddr = "10.132.0.7:45679";
 
 def getExperimentRunner(prefix: String, results: Path, testing: Boolean, benchmarks: Seq[String]): BenchmarkRunner = {
 	var params: Seq[Shellable] = Seq(
