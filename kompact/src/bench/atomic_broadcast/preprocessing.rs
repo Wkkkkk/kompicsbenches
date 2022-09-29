@@ -8,8 +8,8 @@ pub fn split_query(query: &str) -> (String, String) {
     lazy_static! {
         static ref RULES: Vec<&'static str> = vec![
             r#"('\d+\\.*?')"#,                // hash values
-            r#"'((')|(.*?([^\\])'))"#,        // string
-            r#""((")|(.*?([^\\])"))"#,        // double-quoted string
+            //r#"'((')|(.*?([^\\])'))"#,        // string
+            //r#""((")|(.*?([^\\])"))"#,        // double-quoted string
             r#"([^a-zA-Z'(,\*])\d+(\.\d+)?"#,   // integers(prevent us from capturing table name like "a1")
         ];
         static ref REGEX_SETS: Vec<Regex> = RULES.iter()

@@ -722,7 +722,7 @@ where
             for f in kill_futures {
                 f.await.expect("Failed to kill child components");
             }
-            ask.reply(Done).unwrap();
+            ask.reply(Done);
         })
     }
 

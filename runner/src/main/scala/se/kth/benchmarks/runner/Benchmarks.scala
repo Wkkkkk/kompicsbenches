@@ -236,8 +236,8 @@ object Benchmarks extends ParameterDescriptionImplicits {
 
   /*** split into different parameter spaces as some parameters are dependent on each other ***/
   private val atomicBroadcastTestNodes = List(3);
-  private val atomicBroadcastTestProposals = List(1500L.k);
-  private val atomicBroadcastTestConcurrentProposals = List(20L.k, 50L.k, 100L.k, 200L.k, 500L.k, 1L.mio);
+  private val atomicBroadcastTestProposals = List(1000L.k);
+  private val atomicBroadcastTestConcurrentProposals = List(10L.k, 50L.k, 100L.k, 500L.k, 1000L.k);
   private val atomicBroadcastLocalProposals = "/home/kunwu/raw_queries.txt";
 
   private val atomicBroadcastNodes = List(3, 5);
@@ -329,7 +329,7 @@ object Benchmarks extends ParameterDescriptionImplicits {
           )
       },
     testSpace = atomicBroadcastNormalTestSpace
-      .msg[AtomicBroadcastRequest] {
+      .msg[AtomicBroadcastRequest] ({
         case (a, nn, np, cp, r, rp, ns) =>
           AtomicBroadcastRequest(
             algorithm = a,
@@ -341,7 +341,8 @@ object Benchmarks extends ParameterDescriptionImplicits {
             networkScenario = ns,
             filePath = atomicBroadcastLocalProposals,
           )
-      }
+      },
+      0)
   );
 
   val benchmarks: List[Benchmark] = Macros.memberList[Benchmark];

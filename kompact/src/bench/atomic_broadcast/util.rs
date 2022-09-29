@@ -103,10 +103,11 @@ pub(crate) mod exp_util {
             #[cfg(feature = "track_cache_overhead")] 
             {
                 if hit {
-                    cache.counter.hits += 1;
+                        cache.counter.hits += 1;
                 } else {
                     cache.counter.misses += 1;
                 }
+            
                 let elapsed = now.elapsed();
                 cache.counter.compressed_size += self.sql.len() as u64;
                 cache.counter.compression_time += elapsed.as_micros() as u64;
@@ -115,39 +116,46 @@ pub(crate) mod exp_util {
             }
         }
 
-        // #[cfg(feature = "cache_compression")]
-        // fn compress(&mut self, cache: &mut Controller) {
-        //     let now = Instant::now();
-        //     let parameters = &self.sql.split(",").collect::<Vec<&str>>();
-        //     let len_tuple = cache.len();
-        //     cache.counter.size = (len_tuple.0 + len_tuple.1 + len_tuple.2) as u64;
-        //     cache.counter.num_queries += 1;
-        //     cache.counter.raw_messsages_size += self.sql.len() as u64;
+        #[cfg(feature = "cache_compression2")]
+        fn encode(&mut self, cache: &mut Controller) {
+             let now = Instant::now();
+             let parameters = &self.sql.split(" ").collect::<Vec<&str>>();
+             
+             #[cfg(feature = "track_cache_overhead")] 
+             {     
+                let len_tuple = cache.len();
+                cache.counter.size = (len_tuple.0 + len_tuple.1 + len_tuple.2) as u64;
+                cache.counter.num_queries += 1;
+                cache.counter.raw_messsages_size += self.sql.len() as u64;
+             }
 
-        //     let compressed = parameters.iter()
-        //         .map(|p| {
-        //             if let Some(index) = cache.get_index_of(p) {
-        //                 let index_str = "_".to_owned() + &index.to_string();
-        //                 index_str
-        //             } else {
-        //                 (**p).to_string()
-        //             }
-        //         })
-        //         .collect::<Vec<String>>()
-        //         .join(",");
+             let compressed = parameters.iter()
+                 .map(|p| {
+                     if let Some(index) = cache.get_index_of(p) {
+                         let index_str = "_".to_owned() + &index.to_string();
+                         index_str
+                     } else {
+                         (**p).to_string()
+                     }
+                 })
+                 .collect::<Vec<String>>()
+                 .join(",");
+      
+             #[cfg(feature = "track_cache_overhead")]
+             {
+                 let elapsed = now.elapsed();
+                 cache.counter.compressed_size += compressed.len() as u64;
+                 cache.counter.compression_time += elapsed.as_micros() as u64;
+                 cache.counter.try_write_to_file("counter_logs.txt");
+             }
 
-        //     let elapsed = now.elapsed();
-        //     cache.counter.compressed_size += compressed.len() as u64;
-        //     cache.counter.compression_time += elapsed.as_micros() as u64;
-
-        //     // update cache for leader
-        //     for para in parameters {
-        //         cache.insert(&para, para.to_string());
-        //     }
+             // update cache for leader
+             for para in parameters {
+                 cache.insert(&para, para.to_string());
+             }
             
-        //     self.sql = compressed;
-        //     cache.counter.try_write_to_file("counter_logs.txt");
-        // }
+             self.sql = compressed;
+         }
 
         #[cfg(feature = "enable_cache_compression")]
         fn decode(&mut self, cache: &mut Controller) {
@@ -181,29 +189,27 @@ pub(crate) mod exp_util {
             self.sql = merge_query(template, parameters);
         }
 
+        #[cfg(feature = "cache_compression2")]
+        fn decode(&mut self, cache: &mut Controller) {
+            let parts: Vec<&str> = self.sql.split(",").collect();
 
-        // #[cfg(feature = "cache_compression")]
-        // fn decompress(&mut self, cache: &mut Controller) {
-        //     let parts: Vec<&str> = self.sql.split(",").collect();
-
-        //     let uncompressed = parts.iter()
-        //         .map(|p| {
-        //             if (**p).starts_with("_") {
-        //                 let index = (**p)[1..].parse::<usize>().unwrap();
-        //                 cache.get_index(index).unwrap().value().to_string()
-        //             } else {
-        //                 (**p).to_string()
-        //             }
-        //         })
-        //         .collect::<Vec<String>>();
-            
-        //     self.sql = uncompressed.join(",");
-
-        //     // update cache for followers
-        //     for para in uncompressed {
-        //         cache.insert(&para, para.clone());
-        //     }
-        // }
+            let uncompressed = parts.iter()
+                .map(|p| {
+                    if (**p).starts_with("_") {
+                        let index = (**p)[1..].parse::<usize>().unwrap();
+                        cache.get_index(index).unwrap().value().to_string()
+                    } else {
+                        (**p).to_string()
+                    }
+                })
+                .collect::<Vec<String>>();
+         
+            self.sql = uncompressed.join(" ");
+            // update cache for followers
+            for para in uncompressed {
+                cache.insert(&para, para.clone());
+            }
+        }
     }
 
     pub type SnapshotType = ();

@@ -17,8 +17,8 @@ import $ivy.`com.decodified::scala-ssh:0.9.0`, com.decodified.scalassh.{SSH, Hos
 
 //val runnerAddr = "127.0.0.1:45678";
 //val masterAddr = "127.0.0.1:45679";
-val runnerAddr = "10.128.0.63:45678";
-val masterAddr = "10.128.0.63:45679";
+val runnerAddr = "10.132.0.7:45678";
+val masterAddr = "10.132.0.7:45679";
 
 def getExperimentRunner(prefix: String, results: Path, testing: Boolean, benchmarks: Seq[String]): BenchmarkRunner = {
 	var params: Seq[Shellable] = Seq(
@@ -297,7 +297,7 @@ private def fakeRemoteExperiment(experimentRunner: BenchmarkRunner, master: Benc
 				val r = stopFakeClient(node, pid);
 				println(s"Tried to stop client $node: $r");
 			}
-			case(node, Failure(_)) => Console.err.println(s"Could not stop client $node due to missing pid")
+			case (node, Failure(_)) => Console.err.println(s"Could not stop client $node due to missing pid")
 		}
 	}
 }
