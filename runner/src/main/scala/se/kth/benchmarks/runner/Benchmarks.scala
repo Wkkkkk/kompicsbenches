@@ -236,20 +236,20 @@ object Benchmarks extends ParameterDescriptionImplicits {
 
   /*** split into different parameter spaces as some parameters are dependent on each other ***/
   private val atomicBroadcastTestNodes = List(3);
-  private val atomicBroadcastTestProposals = List(10L.k);
-  private val atomicBroadcastTestConcurrentProposals = List(200L);
-  private val atomicBroadcastTestProbability = List(0.5);
-  private val atomicBroadcastTestDataSize = List(10L, 1000L);
-  private val atomicBroadcastTestCompressionRate = List(0.2, 0.5);
-  private val atomicBroadcastTestPreprocessingTime = List(1L, 5L);
+  private val atomicBroadcastTestProposals = List(150L.k);
+  private val atomicBroadcastTestConcurrentProposals = List(10L.k, 50L.k, 100L.k);
+  private val atomicBroadcastTestProbability = List(0.5, 0.75, 1.0);
+  private val atomicBroadcastTestDataSize = List(200L, 300L, 400L, 500L);
+  private val atomicBroadcastTestCompressionRate = List(0.5, 0.8);
+  private val atomicBroadcastTestPreprocessingTime = List(2L, 5L);
 
-  private val atomicBroadcastNodes = List(3);
-  private val atomicBroadcastProposals = List(1L.mio);
-  private val atomicBroadcastConcurrentProposals = List(10L.k, 50L.k, 100L.k);
+  private val atomicBroadcastNodes = List(5);
+  private val atomicBroadcastProposals = List(50L.k);
+  private val atomicBroadcastConcurrentProposals = List(1L.k, 5L.k, 10L.k);
   private val atomicBroadcastProbability = List(0.0, 0.5, 1.0);
   private val atomicBroadcastDataSize = List(1024L, 4096L, 16384L, 65536L);
   private val atomicBroadcastCompressionRate = List(0.2, 0.5, 0.8);
-  private val atomicBroadcastPreprocessingTime = List(100L, 500L, 1000L);
+  private val atomicBroadcastPreprocessingTime = List(10L, 50L, 100L);
 
   //private val algorithms = List("paxos", "raft_pv_qc");
   //private val reconfig = List("single", "majority");
@@ -310,14 +310,14 @@ object Benchmarks extends ParameterDescriptionImplicits {
   private val atomicBroadcastNormalBaselineSpace = ParameterSpacePB
     .cross(
       algorithms,
-      atomicBroadcastNodes,
-      atomicBroadcastProposals,
-      atomicBroadcastConcurrentProposals,
+      atomicBroadcastTestNodes,
+      atomicBroadcastTestProposals,
+      atomicBroadcastTestConcurrentProposals,
       List("off"),
       List("none"),
       network_scenarios,
       List(0.0),
-      atomicBroadcastDataSize,
+      atomicBroadcastTestDataSize,
       List(0.0),
       List(0L)
     );
@@ -356,8 +356,8 @@ object Benchmarks extends ParameterDescriptionImplicits {
     invoke = (stub, request: AtomicBroadcastRequest) => {
       stub.atomicBroadcast(request)
     },
-    space = atomicBroadcastNormalSpace
-      .append(atomicBroadcastNormalBaselineSpace)
+    space = atomicBroadcastNormalBaselineSpace
+      .append(atomicBroadcastNormalSpace)
       .msg[AtomicBroadcastRequest] ({
         case (a, nn, np, cp, r, rp, ns, pro, ds, cr, pt) =>
           AtomicBroadcastRequest(
@@ -375,8 +375,9 @@ object Benchmarks extends ParameterDescriptionImplicits {
           )
       },
       0),
-    testSpace = atomicBroadcastNormalTestSpace
-      .msg[AtomicBroadcastRequest] {
+    testSpace = atomicBroadcastNormalBaselineSpace 
+      .append(atomicBroadcastNormalTestSpace)
+      .msg[AtomicBroadcastRequest] ({
         case (a, nn, np, cp, r, rp, ns, pro, ds, cr, pt) =>
           AtomicBroadcastRequest(
             algorithm = a,
@@ -391,7 +392,8 @@ object Benchmarks extends ParameterDescriptionImplicits {
             compressionRate = cr,
             preprocessingTime = pt
           )
-      }
+      },
+      138)
   );
 
   val benchmarks: List[Benchmark] = Macros.memberList[Benchmark];
